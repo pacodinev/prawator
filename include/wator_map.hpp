@@ -9,6 +9,7 @@
 #include <memory>
 #include <memory_resource>
 #include <optional>
+#include <ostream>
 #include <random>
 #include <vector>
 
@@ -149,6 +150,7 @@ private:
 
     };
 
+    unsigned m_width, m_height;
     unsigned numaCount;
     std::unique_ptr<std::unique_ptr<Allocators>[]> numaAlloc;
 
@@ -169,8 +171,7 @@ private:
         }
     };
 
-    using Test = std::unique_ptr<PerNumaData, PmrAllocDeleter>;
-    std::unique_ptr<Test[]> perNuma;
+    std::unique_ptr<std::unique_ptr<PerNumaData, PmrAllocDeleter>[]> perNuma;
 
     void generateNuma(const Rules &rules, const ExecutionPlanner &exp, unsigned numaNode, unsigned heightPerCpu, 
             unsigned &heightRem, std::pmr::memory_resource *pmr) {
@@ -235,6 +236,9 @@ public:
            throw std::runtime_error("Height is too small or CPU count is too large!");
         }
 
+        m_width = rules.width;
+        m_height = rules.height;
+
         if(exp.isNuma()) {
             numaCount = exp.getNumaList().size();
             
@@ -249,7 +253,7 @@ public:
         else {
             numaCount = 1;
         }
-        perNuma = std::make_unique<Test[]>(numaCount);
+        perNuma = std::make_unique<std::unique_ptr<PerNumaData, PmrAllocDeleter>[]>(numaCount);
 
         unsigned heightPerCpu = rules.height/(2*exp.getCpuCnt());
         unsigned heightRem = rules.height - 2*exp.getCpuCnt()*heightPerCpu;
@@ -428,6 +432,37 @@ public:
 
         PerMapLineData &line = cord.numaData->lines[cord.lineInNuma];
         return line.newDown;
+    }
+
+    void saveMap(std::ostream &fout, bool includeHeader = false) const {
+        if(includeHeader) {
+            fout.write(reinterpret_cast<const char*>(&m_width), sizeof(m_width)); // NOLINT 
+            fout.write(reinterpret_cast<const char*>(&m_height), sizeof(m_height)); // NOLINT
+            std::size_t bytesPerMap = static_cast<std::size_t>(m_width)*m_height;
+            bytesPerMap = (bytesPerMap+3)/4;
+            fout.write(reinterpret_cast<const char*>(&bytesPerMap), sizeof(bytesPerMap)); // NOLINT
+        }
+
+        unsigned shift = 0;
+        std::uint8_t buffer = 0;
+
+        for(unsigned numaInd=0; numaInd<numaCount; ++numaInd) {
+            for(unsigned lineInd=0; lineInd<perNuma[numaInd]->lines.size(); ++lineInd) {
+                for(std::size_t i=0; i<perNuma[numaInd]->lines[lineInd].map.size(); ++i) {
+                    unsigned curEnt = static_cast<unsigned>(perNuma[numaInd]->lines[lineInd].map[i].getEntity());
+                    // curEnt &= 0x03;
+
+                    buffer |= (curEnt << shift); shift += 2;
+                    if(shift >= 8) { // NOLINT
+                        shift = 0;
+                        fout.write(reinterpret_cast<const char*>(&buffer), sizeof(buffer)); // NOLINT
+                        buffer = 0;
+                    }
+                }
+            }
+        }
+
+        fout.flush();
     }
 
 };
