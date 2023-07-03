@@ -12,6 +12,8 @@
 #include <string>
 #include <filesystem>
 
+#include <config.h>
+
 template<class T>
 class Worker {
 private:
@@ -65,16 +67,19 @@ private:
         m_avgFreq = newAvgFreq;
     }
 
+#ifdef WATOR_CPU_PIN
     void setCpuMask() noexcept {
         cpu_set_t cpuMask;
         CPU_ZERO(&cpuMask);
-        CPU_SET(m_cpuPin, &cpuMask);
+        CPU_SET(m_cpuPin, &cpuMask); // NOLINT
         int ret = sched_setaffinity(0, sizeof(cpuMask), &cpuMask);
         assert(ret == 0); // TODO: yea, this is bad, only for debug
     }
+#else
+    void setCpuMask() noexcept { }
+#endif
 
     void workFn() noexcept {
-        // TODO: sched call
         setCpuMask();
 
         std::unique_lock<std::mutex> ulk(m_lock);
