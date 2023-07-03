@@ -1,5 +1,9 @@
 #pragma once
 
+#include <config.h>
+
+#ifdef WATOR_NUMA
+
 #include <cassert>
 
 #include <memory_resource>
@@ -53,3 +57,5 @@ public:
        
     }
 };
+
+#endif
