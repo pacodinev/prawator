@@ -1,0 +1,6 @@
+#pragma once
+
+#cmakedefine WATOR_BUILD_MAP_READER
+#cmakedefine WATOR_CPU_PIN
+#cmakedefine WATOR_NUMA
+#cmakedefine WATOR_NUMA_OPTIMIZE
