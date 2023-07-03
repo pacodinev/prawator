@@ -17,7 +17,7 @@ void checkEPResult(unsigned numThreads, bool enableHT) {
         }
     } else // NUMA is not supported
     {
-        CHECK(epl.getNumaList().empty());
+        CHECK(epl.getNumaList().size() == 1);
         const std::vector<unsigned> &curCpuList = epl.getCpuListPerNuma(0);
         cpusTotal += curCpuList.size();
         CHECK(std::is_sorted(curCpuList.begin(), curCpuList.end()) == true);

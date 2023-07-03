@@ -26,6 +26,7 @@ private:
     std::vector<unsigned> m_numaList;
     std::vector<std::vector<unsigned>> m_cpuPerNuma;
     unsigned m_cpuCnt;
+    bool m_isNuma;
 
 
     // private member functions
@@ -68,7 +69,7 @@ public:
 
     ExecutionPlanner(unsigned numThreads, bool enableHT);
 
-    [[nodiscard]] bool isNuma() const { return !m_numaList.empty(); }
+    [[nodiscard]] bool isNuma() const { return m_isNuma; }
     [[nodiscard]] auto getNumaList() const
     -> const std::vector<unsigned>& { return m_numaList; }
     // for NonNUMA system use numaNode = 0

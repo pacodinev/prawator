@@ -10,6 +10,8 @@
 
 #include <numa.h>
 
+#include <config.h>
+
 static constexpr const char* linuxSysFSCPUPath{"/sys/devices/system/cpu"};
 
 std::optional<ExecutionPlanner> ExecutionPlanner::instance; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
@@ -76,13 +78,15 @@ auto ExecutionPlanner::HTInfo::getInfo(const std::vector<unsigned> &cpuList)
 
 void ExecutionPlanner::solveNoNumaHt(unsigned numThreads)
 {
+    m_isNuma = false;
     std::vector<unsigned> cpuList = getCPUList();
 
     if(numThreads > cpuList.size()) {
         throw std::runtime_error("Machine has lower number of CPUs than requested");
     }
 
-    m_numaList.clear();
+    // add a virtual NUMA node
+    m_numaList.push_back(0);
     m_numaList.shrink_to_fit();
 
     m_cpuPerNuma.resize(1);
@@ -91,13 +95,15 @@ void ExecutionPlanner::solveNoNumaHt(unsigned numThreads)
 
 void ExecutionPlanner::solveNoNumaNoHt(unsigned numThreads)
 {
+    m_isNuma = false;
     std::vector<unsigned> cpuList = getCPUList();
 
     if(numThreads > cpuList.size()) {
         throw std::runtime_error("Machine has lower number of CPUs than requested");
     }
 
-    m_numaList.clear();
+    // add a virtual NUMA node
+    m_numaList.push_back(0);
     m_numaList.shrink_to_fit();
 
     HTInfo hti = HTInfo::getInfo(cpuList);
@@ -133,8 +139,19 @@ void ExecutionPlanner::solveNoNumaNoHt(unsigned numThreads)
     }
 }
 
+#ifdef WATOR_NUMA
+
 void ExecutionPlanner::solveNumaHt(unsigned numThreads)
 {
+#ifdef WATOR_NUMA_OPTIMIZE 
+    if(numa_num_task_nodes() <= 1) {
+        // just lie :)
+        solveNoNumaHt(numThreads);
+        return;
+    }
+#endif
+
+    m_isNuma = true;
     numa_exit_on_error = 1;
 
     int maxNumaNode = numa_max_node();
@@ -181,6 +198,15 @@ void ExecutionPlanner::solveNumaHt(unsigned numThreads)
 
 void ExecutionPlanner::solveNumaNoHt(unsigned numThreads)
 {
+#ifdef WATOR_NUMA_OPTIMIZE 
+    if(numa_num_task_nodes() <= 1) {
+        // just lie
+        solveNoNumaNoHt(numThreads);
+        return;
+    }
+#endif
+
+    m_isNuma = true;
     std::vector<unsigned> cpuList = getCPUList();
     HTInfo hti = HTInfo::getInfo(cpuList);
     
@@ -241,7 +267,18 @@ void ExecutionPlanner::solveNumaNoHt(unsigned numThreads)
     m_numaList.shrink_to_fit();
 }
 
+#else //WATOR_NUMA
+void ExecutionPlanner::solveNumaHt(unsigned numThreads) {
+    solveNoNumaHt(numThreads);
+}
+
+void ExecutionPlanner::solveNumaNoHt(unsigned numThreads) {
+    solveNoNumaNoHt(numThreads);
+}
+#endif
+
 ExecutionPlanner::ExecutionPlanner(unsigned numThreads, bool enableHT) {
+#ifdef WATOR_NUMA
     if(numa_available() < 0 && enableHT) {
         solveNoNumaHt(numThreads);
     } else if(numa_available() < 0 && !enableHT) {
@@ -251,6 +288,13 @@ ExecutionPlanner::ExecutionPlanner(unsigned numThreads, bool enableHT) {
     } else {
         solveNumaNoHt(numThreads);
     }
+#else 
+    if(enableHT) {
+        solveNoNumaHt(numThreads);
+    } else { // if(!enableHT) 
+        solveNoNumaNoHt(numThreads);
+    }
+#endif
 
     this->m_cpuCnt = numThreads;
 }
