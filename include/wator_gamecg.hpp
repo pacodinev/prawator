@@ -8,6 +8,7 @@
 
 #include <memory>
 #include <random>
+#include <type_traits>
 #include <vector>
 
 namespace WaTor {
@@ -23,21 +24,27 @@ private:
         // unsigned seed; // not zero
         linear_feedback_shift_register_engine<std::uint32_t, 0xDEADBEEF> rng;
 
-        auto findTile(const std::array<Map::DirHelperData, 4> &dirs, 
+        auto findTiles(const std::array<Map::Cordinate, 4> &dirs,
                         Map::Entity entSearch, unsigned &resSize) const
-            -> std::array<Map::DirHelperData, 4> ;
+            -> std::array<unsigned, 4> ;
 
-        void updateFish(const Map::Cordinate &curCord, Map::Tile &curTile,
-                        const std::array<Map::DirHelperData, 4> &dirs);
+        auto findTilesFish(const std::array<Map::Cordinate, 4> &dirs,
+                        unsigned &resSize) const
+            -> std::array<unsigned, 4> ;
 
-        void updateShark(const Map::Cordinate &curCord, Map::Tile &curTile,
-                        const std::array<Map::DirHelperData, 4> &dirs);
+        auto findTilesShark(const std::array<Map::Cordinate, 4> &dirs,
+                        unsigned &resSize, bool &ate) const
+            -> std::array<unsigned, 4> ;
 
-        void updateMidLine(const Map::Cordinate &curCord);
+        template<class T, bool midInLine>
+        [[nodiscard]] T updateFish(const Map::Cordinate &curCord, Map::Tile &curTile,
+                        const std::array<Map::Cordinate, 4> &dirs);
 
-        void updateUpLine(const Map::Cordinate &curCord);
-
-        void updateDownLine(const Map::Cordinate &curCord);
+        template<class T, bool midInLine>
+        [[nodiscard]] T updateShark(const Map::Cordinate &curCord, Map::Tile &curTile,
+                        const std::array<Map::Cordinate, 4> &dirs);
+        template<unsigned vertLevel>
+        void updateEntity(const Map::Cordinate &curCord);
 
     public:
 

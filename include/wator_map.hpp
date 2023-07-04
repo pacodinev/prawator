@@ -19,6 +19,8 @@
 #include "numa_allocator.hpp"
 #include "wator_rules.hpp"
 
+#include <config.h>
+
 namespace WaTor {
 
 class Map
@@ -106,17 +108,14 @@ private:
     };
 
     struct PerNumaData {
-        NumaAllocator numaAllocRes;
-        std::pmr::monotonic_buffer_resource allocRes;
-
         std::pmr::vector<PerMapLineData> lines;
-
 
         unsigned numaNode;
 
         // width, height of the map for this numaNode
-        PerNumaData(unsigned width, unsigned height, unsigned curNode, const ExecutionPlanner &exp) 
-            : numaAllocRes(curNode), allocRes(&numaAllocRes), lines(&allocRes), numaNode(curNode) {
+        PerNumaData(unsigned width, unsigned height, unsigned curNode, const ExecutionPlanner &exp,
+                    std::pmr::memory_resource *pmr) 
+            : lines(pmr), numaNode(curNode) {
             const std::vector<unsigned> &cpuList = exp.getCpuListPerNuma(curNode);
             unsigned cpuCnt = static_cast<unsigned>(cpuList.size());
 
@@ -134,18 +133,27 @@ private:
                     --heightRem;
                 }
 
-                lines.emplace_back(width, newHeight, &allocRes);
+                lines.emplace_back(width, newHeight, pmr);
             }
         }
     };
 
     class Allocators {
     private:
+#ifdef WATOR_NUMA
         NumaAllocator numaAlloc;
+#endif
         std::pmr::monotonic_buffer_resource alloc;
 
     public:
-        explicit Allocators(unsigned numaNode) : numaAlloc(numaNode), alloc(&numaAlloc) { }
+        explicit Allocators(unsigned numaNode) : 
+#ifdef WATOR_NUMA
+            numaAlloc(numaNode), 
+            alloc(&numaAlloc)
+#else 
+            alloc(std::pmr::get_default_resource())
+#endif
+            { }
         std::pmr::memory_resource* get() { return &alloc; }
 
     };
@@ -177,8 +185,8 @@ private:
             unsigned &heightRem, std::pmr::memory_resource *pmr) {
         unsigned curNumaCpuCnt = static_cast<unsigned>(exp.getCpuListPerNuma(numaNode).size());
         unsigned newHeight = 2*heightPerCpu*curNumaCpuCnt;
-        newHeight += std::min(curNumaCpuCnt, heightRem);
-        heightRem -= std::min(curNumaCpuCnt, heightRem);
+        newHeight += std::min(2*curNumaCpuCnt, heightRem);
+        heightRem -= std::min(2*curNumaCpuCnt, heightRem);
 
         // rules.width, newHeight, numaNode, exp
         // perNuma[numaNode] = std::make_unique<PerNumaData, AllocatorDeleter>(rules.width, newHeight, numaNode, exp);
@@ -186,7 +194,7 @@ private:
         PerNumaData *ptr = alloc.allocate(1);
 
         // TODO: catch if this throws ... memory leak ... too bad :(
-        alloc.construct(ptr, rules.width, newHeight, numaNode, exp);
+        alloc.construct(ptr, rules.width, newHeight, numaNode, exp, pmr);
 
         perNuma[numaNode] = {ptr, PmrAllocDeleter{pmr}};
     }
@@ -271,22 +279,16 @@ public:
     }
 
     struct Cordinate {
-        PerNumaData *numaData;
+        PerNumaData *numaData; // numaData == perNuma[numaInd].get()
         unsigned numaInd;
         unsigned lineInNuma;
         unsigned posy, posx;
     };
 
-    struct DirHelperData {
-        std::pmr::vector<bool> *markNewLine;
-        Cordinate cord;
-    };
-
-    // numaData == numaData[numaInd]
-    [[nodiscard]] struct DirHelperData dirHelper(Cordinate cord, unsigned dir) const {
-        DirHelperData res;
+    [[nodiscard]] Cordinate dirHelper(Cordinate cord, unsigned dir) const {
+        Cordinate res;
         int posy = static_cast<int>(cord.posy);
-        int posx = static_cast<int>(cord.posy);
+        int posx = static_cast<int>(cord.posx);
         
         constexpr int diry[] = {-1, 0, 1, 0};
         constexpr int dirx[] = {0, 1, 0, -1};
@@ -314,9 +316,7 @@ public:
                 newLineInNuma = static_cast<int>(perNuma[static_cast<unsigned>(newNumaInd)]->lines.size()-1);
             }
             resY = perNuma[static_cast<unsigned>(newNumaInd)]->lines[newLineInNuma].height-1;
-        }
-
-        if(resY >= cord.numaData->lines[newLineInNuma].height) {
+        } else if(resY >= cord.numaData->lines[newLineInNuma].height) {
             ++newLineInNuma;
             if(newLineInNuma >= cord.numaData->lines.size()) {
                 ++newNumaInd;
@@ -331,27 +331,47 @@ public:
         }
 
         if(cord.numaInd == static_cast<unsigned>(newNumaInd)) {
-            res.cord.numaData = cord.numaData;
+            res.numaData = cord.numaData;
         } else {
-            res.cord.numaData = perNuma[newNumaInd].get();
+            res.numaData = perNuma[newNumaInd].get();
         }
 
-        res.cord.numaInd = newNumaInd;
-        res.cord.lineInNuma = newLineInNuma;
-        res.cord.posy = resY;
-        res.cord.posx = resX;
-
-        res.markNewLine = nullptr;
-        if(cord.numaInd != static_cast<unsigned>(newNumaInd) || cord.lineInNuma != newLineInNuma) {
-            if(dir == 0) {
-                res.markNewLine = &res.cord.numaData->lines[res.cord.lineInNuma].newDown;
-            } else if(dir == 2){
-                res.markNewLine = &res.cord.numaData->lines[res.cord.lineInNuma].newUp;
-            }
-        }
+        res.numaInd = newNumaInd;
+        res.lineInNuma = newLineInNuma;
+        res.posy = resY;
+        res.posx = resX;
 
         return res;
     }
+
+    // only works if cord.posy is not min or max
+    [[nodiscard]] Cordinate dirHelperFastPath(Cordinate cord, unsigned dir) const {
+        Cordinate res;
+        int posy = static_cast<int>(cord.posy);
+        int posx = static_cast<int>(cord.posx);
+        
+        constexpr int diry[] = {-1, 0, 1, 0};
+        constexpr int dirx[] = {0, 1, 0, -1};
+
+        int resY = posy + diry[dir];
+        assert(0 <= resY && resY < cord.numaData->lines[cord.lineInNuma].height);
+        int resX = posx + dirx[dir];
+
+        if(resX < 0) {
+            resX = static_cast<int>(cord.numaData->lines[cord.lineInNuma].width-1);
+        } else if(resX >= static_cast<int>(cord.numaData->lines[cord.lineInNuma].width-1)) {
+            resX = 0;
+        }
+
+        res.numaData = cord.numaData;
+        res.numaInd = cord.numaInd;
+        res.lineInNuma = cord.lineInNuma;
+        res.posy = resY;
+        res.posx = resX;
+
+        return res;
+    }
+
     [[nodiscard]] Cordinate getCord(unsigned numaInd, unsigned lineInd, unsigned posy, unsigned posx) {
         Cordinate cord;
         cord.numaInd = numaInd;
@@ -377,14 +397,6 @@ public:
         return line.map[line.width*cord.posy + cord.posx];
     }
 
-    [[nodiscard]] Tile& get(const DirHelperData &dhd) {
-        return get(dhd.cord);
-    }
-
-    [[nodiscard]] const Tile& get(const DirHelperData &dhd) const {
-        return get(dhd.cord);
-    }
-
     [[nodiscard]] std::pmr::vector<bool>& getUpdateBuf(const Cordinate &cord) {
         assert(perNuma[cord.numaInd].get() == cord.numaData);
 
@@ -404,6 +416,13 @@ public:
 
         PerMapLineData &line = cord.numaData->lines[cord.lineInNuma];
         return std::make_pair(line.width, line.height);
+    }
+
+    [[nodiscard]] unsigned getLineHeight(const Cordinate &cord) const {
+        assert(perNuma[cord.numaInd].get() == cord.numaData);
+
+        PerMapLineData &line = cord.numaData->lines[cord.lineInNuma];
+        return line.height;
     }
 
     [[nodiscard]] const std::pmr::vector<bool>& getUpBuf(const Cordinate &cord) const {
@@ -446,6 +465,8 @@ public:
         unsigned shift = 0;
         std::uint8_t buffer = 0;
 
+        // TODO: remove
+        volatile unsigned bytesWritten = 0;
         for(unsigned numaInd=0; numaInd<numaCount; ++numaInd) {
             for(unsigned lineInd=0; lineInd<perNuma[numaInd]->lines.size(); ++lineInd) {
                 for(std::size_t i=0; i<perNuma[numaInd]->lines[lineInd].map.size(); ++i) {
@@ -456,13 +477,21 @@ public:
                     if(shift >= 8) { // NOLINT
                         shift = 0;
                         fout.write(reinterpret_cast<const char*>(&buffer), sizeof(buffer)); // NOLINT
+                        ++bytesWritten;
                         buffer = 0;
                     }
                 }
             }
         }
 
-        fout.flush();
+        if(shift != 0) {
+            shift = 0;
+            fout.write(reinterpret_cast<const char*>(&buffer), sizeof(buffer)); // NOLINT
+            ++bytesWritten;
+            buffer = 0;
+        }
+
+        // fout.flush();
     }
 
 };

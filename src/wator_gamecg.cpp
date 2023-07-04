@@ -1,24 +1,46 @@
 #include "wator_gamecg.hpp"
+#include <limits>
 #include <random>
+#include <type_traits>
 
 using namespace WaTor;
-auto GameCG::GamePerThdWork::findTile(const std::array<Map::DirHelperData, 4> &dirs, 
+
+auto GameCG::GamePerThdWork::findTiles(const std::array<Map::Cordinate, 4> &dirs,
                         Map::Entity entSearch, unsigned &resSize) const
-    -> std::array<Map::DirHelperData, 4> {
-    std::array<Map::DirHelperData, 4> res; // NOLINT
+    -> std::array<unsigned, 4> {
+    std::array<unsigned, 4> res; // NOLINT
     resSize = 0;
-    for(const auto &dir : dirs) {
-        if(map->get(dir).getEntity() == entSearch) {
-            res[resSize] = dir; // NOLINT
+    for(unsigned i=0; i<dirs.size(); ++i) {
+        if(map->get(dirs[i]).getEntity() == entSearch) { // NOLINT
+            res[resSize] = i; // NOLINT
             ++resSize;
         }
     }
     return res;
 }
 
-void GameCG::GamePerThdWork::updateFish(
+auto GameCG::GamePerThdWork::findTilesFish(const std::array<Map::Cordinate, 4> &dirs,
+                        unsigned &resSize) const
+    -> std::array<unsigned, 4> {
+    return findTiles(dirs, Map::Entity::WATER, resSize);
+}
+
+auto GameCG::GamePerThdWork::findTilesShark(const std::array<Map::Cordinate, 4> &dirs,
+                        unsigned &resSize, bool &ate) const
+    -> std::array<unsigned, 4> {
+    std::array<unsigned, 4> res { findTiles(dirs, Map::Entity::FISH, resSize) };
+    if(resSize == 0) {
+        ate = false;
+        return findTiles(dirs, Map::Entity::WATER, resSize);
+    }
+    ate = true;
+    return res;
+}
+
+template<class T, bool midInLine>
+T GameCG::GamePerThdWork::updateFish(
         const Map::Cordinate &curCord, Map::Tile &curTile, 
-        const std::array<Map::DirHelperData, 4> &dirs) {
+        const std::array<Map::Cordinate, 4> &dirs) {
     assert(&map->get(curCord) == &curTile);
     assert(curTile.getEntity() == Map::Entity::FISH);
 
@@ -31,46 +53,67 @@ void GameCG::GamePerThdWork::updateFish(
     }
 
     unsigned freeDirCnt;
-    std::array<Map::DirHelperData, 4> freeDirs 
-            {findTile(dirs, Map::Entity::WATER, freeDirCnt)};
+    std::array<unsigned, 4> freeDirs
+            {findTilesFish(dirs, freeDirCnt)};
 
     if(freeDirCnt == 0) {
-        return;
+        if constexpr(std::is_void_v<T>) { 
+            return;
+        } else {
+            return std::numeric_limits<unsigned>::max();
+        }
     }
 
-    unsigned rand = rng.get_bits(4);
-    rand = rand%freeDirCnt;
+    unsigned nextDir = freeDirs[rng.get_bits(4)%freeDirCnt]; // NOLINT
 
-    Map::DirHelperData nextDir{freeDirs[rand]}; // NOLINT
+    Map::Cordinate newCord{dirs[nextDir]}; // NOLINT
 
-    Map::Tile &nextTile = map->get(nextDir);
-    nextTile = curTile;
+    Map::Tile &newTile = map->get(newCord);
+    assert(newTile.getEntity() == Map::Entity::WATER);
+    newTile = curTile;
 
     if(!breeding) {
         curTile.set(Map::Entity::WATER, 0, 0);
     } else {
         curTile.setAge(0);
-        nextTile.setAge(0);
+        newTile.setAge(0);
     }
 
-    if(nextDir.markNewLine == nullptr && 
-            (curCord.posy < nextDir.cord.posy || curCord.posx < nextDir.cord.posx)) {
-        map->getUpdateBuf(curCord)[nextDir.cord.posx] = true;
-    } else if(nextDir.markNewLine != nullptr) {
-        (*nextDir.markNewLine)[nextDir.cord.posx] = true;
+    if constexpr(midInLine) {
+        if(curCord.posy < newCord.posy || curCord.posx < newCord.posx) {
+            map->getUpdateBuf(curCord)[newCord.posx] = true; // newCord == curCord in this case
+        }
+    } else { 
+        if(curCord.lineInNuma == newCord.lineInNuma &&
+           curCord.numaInd == newCord.numaInd && 
+           (curCord.posy < newCord.posy || curCord.posx < newCord.posx)) {
+            map->getUpdateBuf(curCord)[newCord.posx] = true; // newCord == curCord in this case
+        }
     }
+
+    if constexpr(std::is_void_v<T>) { 
+        return;
+    } else {
+        return nextDir;
+    }
+
 }
 
-void GameCG::GamePerThdWork::updateShark(
+template<class T, bool midInLine>
+T GameCG::GamePerThdWork::updateShark(
         const Map::Cordinate &curCord, Map::Tile &curTile, 
-        const std::array<Map::DirHelperData, 4> &dirs) {
+        const std::array<Map::Cordinate, 4> &dirs) {
     assert(&map->get(curCord) == &curTile);
     assert(curTile.getEntity() == Map::Entity::SHARK);
 
     if(curTile.getLastAte() >= rules.sharkStarveTime) {
         // the shark is DEAD, RIP :(
         curTile.set(Map::Entity::WATER, 0, 0);
-        return;
+        if constexpr(std::is_void_v<T>) { 
+            return;
+        } else {
+            return std::numeric_limits<unsigned>::max();
+        }
     }
     curTile.setLastAte(curTile.getLastAte()+1);
    
@@ -82,62 +125,86 @@ void GameCG::GamePerThdWork::updateShark(
         curTile.setAge(curTile.getAge()+1);
     }
 
-    unsigned rand = rng.get_bits(4);
+    unsigned nextDirsCnt;
+    bool ate;
+    std::array<unsigned, 4> nextDirs
+            {findTilesShark(dirs, nextDirsCnt, ate)};
 
-    bool ate{false};
-    bool moved{false};
-    Map::DirHelperData nextDir;
-
-    unsigned fishDirCnt;
-    std::array<Map::DirHelperData, 4> fishDir 
-            {findTile(dirs, Map::Entity::FISH, fishDirCnt)};
-
-    if(fishDirCnt > 0) {
-        ate = true;
-        moved = true;
-        rand = rand%fishDirCnt;
-        nextDir = fishDir[rand]; // NOLINT
-    }
-
-    if(!ate) {
-        unsigned freeDirCnt;
-        std::array<Map::DirHelperData, 4> freeDirs 
-                {findTile(dirs, Map::Entity::WATER, freeDirCnt)};
-        if(freeDirCnt > 0) {
-            moved = true;
-            rand = rand%freeDirCnt;
-            nextDir = freeDirs[rand]; // NOLINT
+    if(nextDirsCnt == 0) {
+        // No free space
+        if constexpr(std::is_void_v<T>) { 
+            return;
+        } else {
+            return std::numeric_limits<unsigned>::max();
         }
     }
 
-    if(!moved) {
-        // No free space
-        return;
-    }
+    unsigned nextDir = nextDirs[rng.get_bits(4)%nextDirsCnt]; // NOLINT
+
+    Map::Cordinate newCord{dirs[nextDir]}; // NOLINT
+
+    Map::Tile &newTile = map->get(newCord);
 
     if(ate) {
         curTile.setLastAte(0);
     }
-
-    Map::Tile &nextTile = map->get(nextDir);
-    nextTile = curTile;
+    newTile = curTile;
 
     if(!breeding) {
         curTile.set(Map::Entity::WATER, 0, 0);
     } else {
         curTile.setAge(0);
-        nextTile.setAge(0);
+        newTile.setAge(0);
     }
 
-    if(nextDir.markNewLine == nullptr && 
-            (curCord.posy < nextDir.cord.posy || curCord.posx < nextDir.cord.posx)) {
-        map->getUpdateBuf(curCord)[nextDir.cord.posx] = true;
-    } else if(nextDir.markNewLine != nullptr) {
-        (*nextDir.markNewLine)[nextDir.cord.posx] = true;
+    if constexpr(midInLine) {
+        if(curCord.posy < newCord.posy || curCord.posx < newCord.posx) {
+            map->getUpdateBuf(curCord)[newCord.posx] = true; // newCord == curCord in this case
+        }
+    } else { 
+        if(curCord.lineInNuma == newCord.lineInNuma &&
+           curCord.numaInd == newCord.numaInd && 
+           (curCord.posy < newCord.posy || curCord.posx < newCord.posx)) {
+            map->getUpdateBuf(curCord)[newCord.posx] = true; // newCord == curCord in this case
+        }
     }
+
+    if constexpr(std::is_void_v<T>) { 
+        return;
+    } else {
+        return nextDir;
+    }
+
 }
 
-void GameCG::GamePerThdWork::updateMidLine(const Map::Cordinate &curCord) {
+//0 - y=0
+//1 - y=1
+//2 - mid
+//3 - y=height-2
+//4 - y=height-1
+template<unsigned vertLevel>
+void GameCG::GamePerThdWork::updateEntity(const Map::Cordinate &curCord) {
+    static_assert(0 <= vertLevel && vertLevel <5, "Invalid vertLevel argument");
+
+    assert(map->getLineHeight(curCord) >= 4);
+    assert(vertLevel != 0 || curCord.posy == 0);
+    assert(vertLevel != 1 || curCord.posy == 1);
+
+    assert(vertLevel != 3 || curCord.posy == map->getLineHeight(curCord) - 2);
+    assert(vertLevel != 4 || curCord.posy == map->getLineHeight(curCord) - 1);
+
+    if constexpr(vertLevel == 0) {
+        if(map->getUpBuf(curCord)[curCord.posx]) {
+            map->getUpBuf(curCord)[curCord.posx] = false;
+            return;
+        }
+    } else if constexpr(vertLevel == 4) {
+        if(map->getDownBuf(curCord)[curCord.posx]) {
+            map->getDownBuf(curCord)[curCord.posx] = false;
+            return;
+        }
+    }
+
     if(map->getUpdateBuf(curCord)[curCord.posx]) {
         map->getUpdateBuf(curCord)[curCord.posx] = false;
         return;
@@ -148,38 +215,65 @@ void GameCG::GamePerThdWork::updateMidLine(const Map::Cordinate &curCord) {
         return;
     }
 
-    std::array<Map::DirHelperData, 4> dirs; // NOLINT
+    std::array<Map::Cordinate, 4> dirs; // NOLINT
     for(unsigned d=0; d<4; ++d) { // NOLINT
-        dirs[d] = map->dirHelper(curCord, d); // NOLINT
+        if constexpr(vertLevel == 0 || vertLevel == 4) {
+            dirs[d] = map->dirHelper(curCord, d); // NOLINT
+        } else {
+            dirs[d] = map->dirHelperFastPath(curCord, d); // NOLINT
+        }
     }
 
-    if(curTile.getEntity() == Map::Entity::FISH) {
-        updateFish(curCord, curTile, dirs);
-    } else { // if Shark
-        updateShark(curCord, curTile, dirs);
-    }
-}
-
-void GameCG::GamePerThdWork::updateUpLine(const Map::Cordinate &curCord) {
-    assert(curCord.posy == 0);
-
-    if(map->getUpBuf(curCord)[curCord.posx]) {
-        map->getUpBuf(curCord)[curCord.posx] = false;
+    unsigned dir;
+    if constexpr(vertLevel == 2) {
+        if(curTile.getEntity() == Map::Entity::FISH) {
+            updateFish<void, true>(curCord, curTile, dirs);
+        } else { // if Shark
+            updateShark<void, true>(curCord, curTile, dirs);
+        }
         return;
+    } else {
+        if(curTile.getEntity() == Map::Entity::FISH) {
+            dir = updateFish<unsigned, true>(curCord, curTile, dirs);
+        } else { // if Shark
+            dir = updateShark<unsigned, true>(curCord, curTile, dirs);
+        }
+        if(dir == std::numeric_limits<unsigned>::max()) {
+            return;
+        }
     }
 
-    updateMidLine(curCord);
-}
-
-void GameCG::GamePerThdWork::updateDownLine(const Map::Cordinate &curCord) {
-    assert(curCord.posy == map->getLineWidthHeight(curCord).second - 1);
-
-    if(map->getDownBuf(curCord)[curCord.posx]) {
-        map->getDownBuf(curCord)[curCord.posx] = false;
-        return;
+    if constexpr(vertLevel == 0) {
+        if(dir == 0) {
+            auto &lineBorderBuff = map->getDownBuf(dirs[0]);
+            lineBorderBuff[dirs[0].posx] = true;
+        }
     }
 
-    updateMidLine(curCord);
+    if constexpr(vertLevel == 0 || vertLevel == 1) {
+        // some sh*tty corner case:
+        Map::Cordinate &newCord {dirs[dir]};
+        if(newCord.posy == 0) {
+            auto &lineBorderBuff = map->getUpBuf(newCord);
+            lineBorderBuff[newCord.posx] = false;
+        }
+    }
+
+    if constexpr(vertLevel == 3 || vertLevel == 4) {
+        // some sh*tty corner case:
+        Map::Cordinate &newCord {dirs[dir]};
+        if(newCord.posy == map->getLineHeight(newCord) - 1) {
+            auto &lineBorderBuff = map->getDownBuf(newCord);
+            lineBorderBuff[newCord.posx] = false;
+        }
+    }
+
+    if constexpr(vertLevel == 4) {
+        if(dir == 2) {
+            auto &lineBorderBuff = map->getUpBuf(dirs[2]);
+            lineBorderBuff[dirs[2].posx] = true;
+        }
+    }
 }
 
 void GameCG::GamePerThdWork::operator() () {
@@ -188,27 +282,38 @@ void GameCG::GamePerThdWork::operator() () {
     unsigned height{dim.second};
     Map::Cordinate curCord = cord;
 
+    assert(height >= 4);
+
     curCord.posy = 0;
     for(unsigned j=0; j<width; ++j) {
         curCord.posx = j;
-        
-        updateUpLine(curCord);
+        updateEntity<0>(curCord);
+    }
+
+    curCord.posy = 1;
+    for(unsigned j=0; j<width; ++j) {
+        curCord.posx = j;
+        updateEntity<1>(curCord);
     }
     
-    for(unsigned i=1; i<height-1; ++i) {
+    for(unsigned i=2; i<height-2; ++i) {
         curCord.posy = i;
         for(unsigned j=0; j<width; ++j) {
             curCord.posx = j;
-            
-            updateMidLine(curCord);
+            updateEntity<2>(curCord);
         }
+    }
+
+    curCord.posy = height-2;
+    for(unsigned j=0; j<width; ++j) {
+        curCord.posx = j;
+        updateEntity<3>(curCord);
     }
 
     curCord.posy = height-1;
     for(unsigned j=0; j<width; ++j) {
         curCord.posx = j;
-        
-        updateDownLine(curCord);
+        updateEntity<4>(curCord);
 
         assert(!map->getUpdateBuf(curCord)[curCord.posx]);
     }
