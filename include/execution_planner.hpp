@@ -35,7 +35,24 @@ private:
     static std::vector<unsigned> getCPUList();
 
     struct HTInfo {
-        std::vector<unsigned> m_cpuToCoreID;
+        struct CpuIDS {
+            unsigned physicalPackageID;
+            unsigned coreID;
+            bool operator== (const CpuIDS &other) const {
+                return coreID == other.coreID && physicalPackageID == other.physicalPackageID;
+            }
+            bool operator< (const CpuIDS &other) const {
+                if(physicalPackageID == other.physicalPackageID) {
+                    return coreID < other.coreID;
+                }
+                return physicalPackageID < other.physicalPackageID;
+            }
+            bool operator!= (const CpuIDS &other) const {
+                return !((*this) == other);
+            }
+        };
+
+        std::vector<CpuIDS> m_cpiIDS;
         //struct CoreIDToCpuMap {
         //    unsigned CoreID;
         //    unsigned cpu;
@@ -47,7 +64,8 @@ private:
         //};
         //std::vector<CoreIDToCpuMap> m_coreIDToCpu;
 
-        static constexpr unsigned NOCPU = std::numeric_limits<unsigned>::max();
+        static constexpr CpuIDS NOCPU = {std::numeric_limits<unsigned>::max(), 
+                                         std::numeric_limits<unsigned>::max()};
 
         static HTInfo getInfo(const std::vector<unsigned> &cpuList);
     };

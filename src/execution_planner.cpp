@@ -4,6 +4,7 @@
 #include <cassert>
 #include <filesystem>
 #include <locale>
+#include <set>
 #include <stdexcept>
 #include <vector>
 #include <fstream>
@@ -53,26 +54,34 @@ auto ExecutionPlanner::HTInfo::getInfo(const std::vector<unsigned> &cpuList)
     -> ExecutionPlanner::HTInfo {
     ExecutionPlanner::HTInfo res;
     const unsigned lastCPU = cpuList.back();
-    res.m_cpuToCoreID.resize(lastCPU+1, NOCPU);
+    res.m_cpiIDS.resize(lastCPU+1, NOCPU);
 
     for(const unsigned cpu : cpuList) {
+        const std::string cpuPPIDPath{
+            "/sys/devices/system/cpu/cpu" +
+            std::to_string(cpu) +
+            "/topology/core_id"
+        };
         const std::string cpuCoreIDPath{
             "/sys/devices/system/cpu/cpu" +
             std::to_string(cpu) +
             "/topology/core_id"
         };
+        std::fstream cpuPPIDFile{cpuPPIDPath, std::fstream::in};
         std::fstream cpuCoreIDFile{cpuCoreIDPath, std::fstream::in};
+        unsigned PPID;
         unsigned coreID;
+        cpuPPIDFile >> PPID;
         cpuCoreIDFile >> coreID;
-        if(cpuCoreIDFile.fail()) {
-            throw std::runtime_error("Failed to read " + cpuCoreIDPath);
+        if(cpuPPIDFile.fail() || cpuCoreIDFile.fail()) {
+            throw std::runtime_error("Failed to read " + cpuPPIDPath + " or " + cpuCoreIDPath);
         }
         cpuCoreIDFile.close();
 
-        res.m_cpuToCoreID[cpu] = coreID;
+        res.m_cpiIDS[cpu] = {PPID, coreID};
     }
 
-    res.m_cpuToCoreID.shrink_to_fit();
+    res.m_cpiIDS.shrink_to_fit();
     return res;
 }
 
@@ -107,27 +116,17 @@ void ExecutionPlanner::solveNoNumaNoHt(unsigned numThreads)
     m_numaList.shrink_to_fit();
 
     HTInfo hti = HTInfo::getInfo(cpuList);
-    
-    unsigned maxCoreID = 
-        *std::max_element(hti.m_cpuToCoreID.begin(), hti.m_cpuToCoreID.end(), 
-            [](unsigned lhs, unsigned rhs) {
-                if(lhs == HTInfo::NOCPU && rhs == HTInfo::NOCPU) { return false; }
-                if(rhs == HTInfo::NOCPU) { return false; }
-                if(lhs == HTInfo::NOCPU) { return true; }
-                return lhs<rhs;
-            });
 
-    std::vector<bool> usedCoreID;
-    usedCoreID.resize(maxCoreID+1, false);
+    std::set<HTInfo::CpuIDS> used;
 
     m_cpuPerNuma.resize(1);
     m_cpuPerNuma[0].reserve(numThreads);
 
     for(unsigned cpu : cpuList) {
-        unsigned coreID = hti.m_cpuToCoreID[cpu];
-        assert(coreID != HTInfo::NOCPU);
-        if(usedCoreID[coreID]) { continue; }
-        usedCoreID[coreID] = true;
+        HTInfo::CpuIDS cpuIDs = hti.m_cpiIDS[cpu];
+        assert(cpuIDs != HTInfo::NOCPU);
+        if(used.count(cpuIDs) > 0) { continue; }
+        used.insert(cpuIDs);
         m_cpuPerNuma[0].push_back(cpu);
         if(m_cpuPerNuma[0].size() == numThreads) {
             break; 
@@ -210,17 +209,7 @@ void ExecutionPlanner::solveNumaNoHt(unsigned numThreads)
     std::vector<unsigned> cpuList = getCPUList();
     HTInfo hti = HTInfo::getInfo(cpuList);
     
-    unsigned maxCoreID = 
-        *std::max_element(hti.m_cpuToCoreID.begin(), hti.m_cpuToCoreID.end(), 
-            [](unsigned lhs, unsigned rhs) {
-                if(lhs == HTInfo::NOCPU && rhs == HTInfo::NOCPU) { return false; }
-                if(rhs == HTInfo::NOCPU) { return false; }
-                if(lhs == HTInfo::NOCPU) { return true; }
-                return lhs<rhs;
-            });
-
-    std::vector<bool> usedCoreID;
-    usedCoreID.resize(maxCoreID+1, false);
+    std::set<HTInfo::CpuIDS> used;
 
     numa_exit_on_error = 1;
 
@@ -235,9 +224,11 @@ void ExecutionPlanner::solveNumaNoHt(unsigned numThreads)
     for(int numaNode=0; numaNode<=maxNumaNode; ++numaNode) {
         numa_node_to_cpus(numaNode, cpuMask);
         for(unsigned cpu : cpuList) {
+            HTInfo::CpuIDS cpuIDs = hti.m_cpiIDS[cpu];
+            assert(cpuIDs != HTInfo::NOCPU);
             if(numa_bitmask_isbitset(cpuMask, static_cast<unsigned>(cpu)) == 1 &&
-                !usedCoreID[hti.m_cpuToCoreID[cpu]]) {
-                usedCoreID[hti.m_cpuToCoreID[cpu]] = true;
+                used.count(cpuIDs) == 0) {
+                used.insert(cpuIDs);
                 m_cpuPerNuma[numaNode].push_back(cpu);
                 ++curAllocCpus;
                 if(curAllocCpus == numThreads) {
