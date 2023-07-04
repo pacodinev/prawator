@@ -4,6 +4,7 @@
 #include <optional>
 #include <stdexcept>
 #include <vector>
+#include <cassert>
 
 class ExecutionPlanner {
 
@@ -75,9 +76,7 @@ public:
     // for NonNUMA system use numaNode = 0
     [[nodiscard]] auto getCpuListPerNuma(unsigned numaNode) const
     -> const std::vector<unsigned>& {
-        if(!isNuma() && numaNode != 0) {
-            throw std::invalid_argument("System is non NUMA, use numeNode = 0");
-        }
+        assert(isNuma() || numaNode == 0);
         if(numaNode > m_cpuPerNuma.size()) {
             throw std::invalid_argument("numaNode is larger than numaNodes on system");
         }
