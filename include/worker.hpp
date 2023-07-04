@@ -12,6 +12,8 @@
 #include <string>
 #include <filesystem>
 
+#include "utils.hpp"
+
 #include <config.h>
 
 template<class T>
@@ -22,49 +24,18 @@ private:
     mutable std::condition_variable m_waitForTask, m_taskReady;
     std::optional<std::thread> m_thread;
     std::chrono::microseconds m_runDuration = std::chrono::microseconds{0};
-    std::uint64_t m_avgFreq = 0; // in kHz
+    std::chrono::microseconds m_lastDuration = std::chrono::microseconds{0};
+    std::uint64_t m_sumFreq = 0; // in kHz
+    std::uint64_t m_lastFreq = 0; // in kHz
     unsigned m_cpuPin = 0;
     bool m_isRunnig = false, m_timeToDie = false;
 
-    // 0 if cannot read
-    [[nodiscard]] std::uint64_t readCurCpuFreq() const { 
-        using namespace std::filesystem;
 
-        std::uint64_t ret {0};
-
-        path cpuinfoCpuFreqPath{"/sys/devices/system/cpu/cpu" + std::to_string(m_cpuPin) + "/cpufreq/cpuinfo_cur_freq"};
-        if(is_regular_file(cpuinfoCpuFreqPath)) {
-            std::fstream fin{cpuinfoCpuFreqPath.c_str(), std::fstream::in};
-            fin >> ret;
-            if(!fin.fail()) {
-                return ret;
-            }
-        }
-
-        path scalingCpuFreqPath{"/sys/devices/system/cpu/cpu" + std::to_string(m_cpuPin) + "/cpufreq/scaling_max_freq"};
-        if(is_regular_file(scalingCpuFreqPath)) {
-            std::fstream fin{scalingCpuFreqPath.c_str(), std::fstream::in};
-            fin >> ret;
-            if(!fin.fail()) {
-                return ret;
-            }
-        }
-
-        return ret; // 0 in case of error
-    }
-
-    void calcAvgFreq(std::chrono::microseconds newTime) {
-
-        std::uint64_t curCpuFreq = readCurCpuFreq();
+    void calcStats() {
+        if(m_lastFreq == 0) { return; }
         
-        if(curCpuFreq == 0) { return; }
-
-        std::chrono::microseconds allTime = m_runDuration + newTime;
-        
-        std::uint64_t newAvgFreq = (m_avgFreq*m_runDuration.count() + curCpuFreq*newTime.count())
-                                    /allTime.count();
-
-        m_avgFreq = newAvgFreq;
+        m_runDuration += m_lastDuration;
+        m_sumFreq += m_lastFreq*m_lastDuration.count();
     }
 
 #ifdef WATOR_CPU_PIN
@@ -104,8 +75,9 @@ private:
 
             // work is finished
             ulk.lock();
-            std::chrono::microseconds newTime = std::chrono::duration_cast<std::chrono::microseconds>(clockEnd - clockStart);
-            m_runDuration += newTime;
+            m_lastFreq = Utils::readCurCpuFreq(m_cpuPin);
+            m_lastDuration = std::chrono::duration_cast<std::chrono::microseconds>(clockEnd - clockStart);
+            calcStats();
             m_isRunnig = false;
             m_work.reset();
 
@@ -167,20 +139,31 @@ public:
         }
     }
     
-    std::chrono::microseconds getRunDuration() const {
+    [[nodiscard]] std::chrono::microseconds getAllRunDuration() const {
         std::unique_lock<std::mutex> ulk(m_lock);
         return m_runDuration;
     }
 
     // in kHz
-    std::uint64_t getAvgFreq() const {
+    [[nodiscard]] std::uint64_t getAvgFreq() const {
         std::unique_lock<std::mutex> ulk(m_lock);
-        return m_avgFreq;
+        return m_sumFreq/m_runDuration.count();
+    }
+
+    [[nodiscard]] std::chrono::microseconds getLastRunDuration() const {
+        std::unique_lock<std::mutex> ulk(m_lock);
+        return m_lastDuration;
+    }
+
+    // in kHz
+    [[nodiscard]] std::uint64_t getLastFreq() const {
+        std::unique_lock<std::mutex> ulk(m_lock);
+        return m_lastFreq;
     }
 
     void clearStats() {
         std::unique_lock<std::mutex> ulk(m_lock);
         m_runDuration = std::chrono::microseconds{0};
-        m_avgFreq = 0;
+        m_sumFreq = 0;
     }
 };

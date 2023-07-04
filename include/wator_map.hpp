@@ -247,8 +247,8 @@ public:
         m_width = rules.width;
         m_height = rules.height;
 
+        numaCount = exp.getNumaList().size();
         if(exp.isNuma()) {
-            numaCount = exp.getNumaList().size();
             
             numaAlloc = std::make_unique<std::unique_ptr<Allocators>[]>(numaCount);
 
@@ -257,9 +257,6 @@ public:
                 numaAlloc[i] = std::make_unique<Allocators>(numaNode);
             }
             
-        }
-        else {
-            numaCount = 1;
         }
         perNuma = std::make_unique<std::unique_ptr<PerNumaData, PmrAllocDeleter>[]>(numaCount);
 

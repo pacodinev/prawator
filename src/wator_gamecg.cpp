@@ -1,4 +1,5 @@
 #include "wator_gamecg.hpp"
+#include <chrono>
 #include <limits>
 #include <random>
 #include <type_traits>
@@ -11,7 +12,7 @@ auto GameCG::GamePerThdWork::findTiles(const std::array<Map::Cordinate, 4> &dirs
     std::array<unsigned, 4> res; // NOLINT
     resSize = 0;
     for(unsigned i=0; i<dirs.size(); ++i) {
-        if(map->get(dirs[i]).getEntity() == entSearch) { // NOLINT
+        if(m_map->get(dirs[i]).getEntity() == entSearch) { // NOLINT
             res[resSize] = i; // NOLINT
             ++resSize;
         }
@@ -41,12 +42,12 @@ template<class T, bool midInLine>
 T GameCG::GamePerThdWork::updateFish(
         const Map::Cordinate &curCord, Map::Tile &curTile, 
         const std::array<Map::Cordinate, 4> &dirs) {
-    assert(&map->get(curCord) == &curTile);
+    assert(&m_map->get(curCord) == &curTile);
     assert(curTile.getEntity() == Map::Entity::FISH);
 
     bool breeding{false};
 
-    if(curTile.getAge() >= rules.fishBreedTime) {
+    if(curTile.getAge() >= m_rules.fishBreedTime) {
         breeding = true;
     } else {
         curTile.setAge(curTile.getAge()+1);
@@ -68,7 +69,7 @@ T GameCG::GamePerThdWork::updateFish(
 
     Map::Cordinate newCord{dirs[nextDir]}; // NOLINT
 
-    Map::Tile &newTile = map->get(newCord);
+    Map::Tile &newTile = m_map->get(newCord);
     assert(newTile.getEntity() == Map::Entity::WATER);
     newTile = curTile;
 
@@ -81,13 +82,13 @@ T GameCG::GamePerThdWork::updateFish(
 
     if constexpr(midInLine) {
         if(curCord.posy < newCord.posy || curCord.posx < newCord.posx) {
-            map->getUpdateBuf(curCord)[newCord.posx] = true; // newCord == curCord in this case
+            m_map->getUpdateBuf(curCord)[newCord.posx] = true; // newCord == curCord in this case
         }
     } else { 
         if(curCord.lineInNuma == newCord.lineInNuma &&
            curCord.numaInd == newCord.numaInd && 
            (curCord.posy < newCord.posy || curCord.posx < newCord.posx)) {
-            map->getUpdateBuf(curCord)[newCord.posx] = true; // newCord == curCord in this case
+            m_map->getUpdateBuf(curCord)[newCord.posx] = true; // newCord == curCord in this case
         }
     }
 
@@ -96,17 +97,16 @@ T GameCG::GamePerThdWork::updateFish(
     } else {
         return nextDir;
     }
-
 }
 
 template<class T, bool midInLine>
 T GameCG::GamePerThdWork::updateShark(
         const Map::Cordinate &curCord, Map::Tile &curTile, 
         const std::array<Map::Cordinate, 4> &dirs) {
-    assert(&map->get(curCord) == &curTile);
+    assert(&m_map->get(curCord) == &curTile);
     assert(curTile.getEntity() == Map::Entity::SHARK);
 
-    if(curTile.getLastAte() >= rules.sharkStarveTime) {
+    if(curTile.getLastAte() >= m_rules.sharkStarveTime) {
         // the shark is DEAD, RIP :(
         curTile.set(Map::Entity::WATER, 0, 0);
         if constexpr(std::is_void_v<T>) { 
@@ -119,7 +119,7 @@ T GameCG::GamePerThdWork::updateShark(
    
     bool breeding{false};
 
-    if(curTile.getAge() >= rules.sharkBreedTime) {
+    if(curTile.getAge() >= m_rules.sharkBreedTime) {
         breeding = true;
     } else {
         curTile.setAge(curTile.getAge()+1);
@@ -143,7 +143,7 @@ T GameCG::GamePerThdWork::updateShark(
 
     Map::Cordinate newCord{dirs[nextDir]}; // NOLINT
 
-    Map::Tile &newTile = map->get(newCord);
+    Map::Tile &newTile = m_map->get(newCord);
 
     if(ate) {
         curTile.setLastAte(0);
@@ -159,13 +159,13 @@ T GameCG::GamePerThdWork::updateShark(
 
     if constexpr(midInLine) {
         if(curCord.posy < newCord.posy || curCord.posx < newCord.posx) {
-            map->getUpdateBuf(curCord)[newCord.posx] = true; // newCord == curCord in this case
+            m_map->getUpdateBuf(curCord)[newCord.posx] = true; // newCord == curCord in this case
         }
     } else { 
         if(curCord.lineInNuma == newCord.lineInNuma &&
            curCord.numaInd == newCord.numaInd && 
            (curCord.posy < newCord.posy || curCord.posx < newCord.posx)) {
-            map->getUpdateBuf(curCord)[newCord.posx] = true; // newCord == curCord in this case
+            m_map->getUpdateBuf(curCord)[newCord.posx] = true; // newCord == curCord in this case
         }
     }
 
@@ -186,31 +186,31 @@ template<unsigned vertLevel>
 void GameCG::GamePerThdWork::updateEntity(const Map::Cordinate &curCord) {
     static_assert(0 <= vertLevel && vertLevel <5, "Invalid vertLevel argument");
 
-    assert(map->getLineHeight(curCord) >= 4);
+    assert(m_map->getLineHeight(curCord) >= 4);
     assert(vertLevel != 0 || curCord.posy == 0);
     assert(vertLevel != 1 || curCord.posy == 1);
 
-    assert(vertLevel != 3 || curCord.posy == map->getLineHeight(curCord) - 2);
-    assert(vertLevel != 4 || curCord.posy == map->getLineHeight(curCord) - 1);
+    assert(vertLevel != 3 || curCord.posy == m_map->getLineHeight(curCord) - 2);
+    assert(vertLevel != 4 || curCord.posy == m_map->getLineHeight(curCord) - 1);
 
     if constexpr(vertLevel == 0) {
-        if(map->getUpBuf(curCord)[curCord.posx]) {
-            map->getUpBuf(curCord)[curCord.posx] = false;
+        if(m_map->getUpBuf(curCord)[curCord.posx]) {
+            m_map->getUpBuf(curCord)[curCord.posx] = false;
             return;
         }
     } else if constexpr(vertLevel == 4) {
-        if(map->getDownBuf(curCord)[curCord.posx]) {
-            map->getDownBuf(curCord)[curCord.posx] = false;
+        if(m_map->getDownBuf(curCord)[curCord.posx]) {
+            m_map->getDownBuf(curCord)[curCord.posx] = false;
             return;
         }
     }
 
-    if(map->getUpdateBuf(curCord)[curCord.posx]) {
-        map->getUpdateBuf(curCord)[curCord.posx] = false;
+    if(m_map->getUpdateBuf(curCord)[curCord.posx]) {
+        m_map->getUpdateBuf(curCord)[curCord.posx] = false;
         return;
     }
 
-    Map::Tile &curTile {map->get(curCord)};
+    Map::Tile &curTile {m_map->get(curCord)};
     if(curTile.getEntity() == Map::Entity::WATER) {
         return;
     }
@@ -218,9 +218,9 @@ void GameCG::GamePerThdWork::updateEntity(const Map::Cordinate &curCord) {
     std::array<Map::Cordinate, 4> dirs; // NOLINT
     for(unsigned d=0; d<4; ++d) { // NOLINT
         if constexpr(vertLevel == 0 || vertLevel == 4) {
-            dirs[d] = map->dirHelper(curCord, d); // NOLINT
+            dirs[d] = m_map->dirHelper(curCord, d); // NOLINT
         } else {
-            dirs[d] = map->dirHelperFastPath(curCord, d); // NOLINT
+            dirs[d] = m_map->dirHelperFastPath(curCord, d); // NOLINT
         }
     }
 
@@ -245,7 +245,7 @@ void GameCG::GamePerThdWork::updateEntity(const Map::Cordinate &curCord) {
 
     if constexpr(vertLevel == 0) {
         if(dir == 0) {
-            auto &lineBorderBuff = map->getDownBuf(dirs[0]);
+            auto &lineBorderBuff = m_map->getDownBuf(dirs[0]);
             lineBorderBuff[dirs[0].posx] = true;
         }
     }
@@ -254,7 +254,7 @@ void GameCG::GamePerThdWork::updateEntity(const Map::Cordinate &curCord) {
         // some sh*tty corner case:
         Map::Cordinate &newCord {dirs[dir]};
         if(newCord.posy == 0) {
-            auto &lineBorderBuff = map->getUpBuf(newCord);
+            auto &lineBorderBuff = m_map->getUpBuf(newCord);
             lineBorderBuff[newCord.posx] = false;
         }
     }
@@ -262,25 +262,25 @@ void GameCG::GamePerThdWork::updateEntity(const Map::Cordinate &curCord) {
     if constexpr(vertLevel == 3 || vertLevel == 4) {
         // some sh*tty corner case:
         Map::Cordinate &newCord {dirs[dir]};
-        if(newCord.posy == map->getLineHeight(newCord) - 1) {
-            auto &lineBorderBuff = map->getDownBuf(newCord);
+        if(newCord.posy == m_map->getLineHeight(newCord) - 1) {
+            auto &lineBorderBuff = m_map->getDownBuf(newCord);
             lineBorderBuff[newCord.posx] = false;
         }
     }
 
     if constexpr(vertLevel == 4) {
         if(dir == 2) {
-            auto &lineBorderBuff = map->getUpBuf(dirs[2]);
+            auto &lineBorderBuff = m_map->getUpBuf(dirs[2]);
             lineBorderBuff[dirs[2].posx] = true;
         }
     }
 }
 
 void GameCG::GamePerThdWork::operator() () {
-    auto dim = map->getLineWidthHeight(cord);
+    Map::Cordinate curCord = m_map->getCord(m_numaInd, m_line, 0, 0);
+    auto dim = m_map->getLineWidthHeight(curCord);
     unsigned width{dim.first};
     unsigned height{dim.second};
-    Map::Cordinate curCord = cord;
 
     assert(height >= 4);
 
@@ -315,41 +315,58 @@ void GameCG::GamePerThdWork::operator() () {
         curCord.posx = j;
         updateEntity<4>(curCord);
 
-        assert(!map->getUpdateBuf(curCord)[curCord.posx]);
+        assert(!m_map->getUpdateBuf(curCord)[curCord.posx]);
     }
 }
 
 
-GameCG::GamePerThdWork::GamePerThdWork(Map *_map, unsigned _numaInd, unsigned _line, const Rules &_rules,
+GameCG::GamePerThdWork::GamePerThdWork(Map *map, unsigned numaInd, unsigned line, const Rules &rules,
                                        unsigned seed)
-    : map(_map), rules(_rules), cord(map->getCord(_numaInd, _line, 0, 0)), 
-      rng((seed == 0) ? 1337 : seed) {
-}
+    : m_map(map), m_rules(rules), rng((seed == 0) ? 1337 : seed), 
+      m_numaInd(numaInd), m_line(line) { }
 
 GameCG::GameCG(const Rules &rules, const ExecutionPlanner &exp, unsigned seed) 
-    :m_rules(rules), m_exp(&exp), m_map(rules, exp, seed), m_rng(seed) {
-    m_workers = std::make_unique<std::optional<Worker<GamePerThdWork>>[]>(exp.getCpuCnt());
+    : m_rules(rules), m_exp(&exp), m_map(rules, exp, seed), m_rng(seed), 
+      m_waitingTime(exp.getCpuCnt(), std::chrono::microseconds{0}) {
+    m_workers = std::make_unique<std::optional<Worker<GamePerThdWork>>[]>(exp.getCpuCnt()-1);
 
-    if(m_exp->isNuma()) {
-        unsigned cpuInd=0;
-        for(unsigned numaNode : exp.getNumaList()) {
-            for(unsigned cpu : exp.getCpuListPerNuma(numaNode)) {
-                if(cpuInd > 0)
-                    m_workers[cpuInd].emplace(cpu);
-                ++cpuInd;
+    unsigned cpuInd=0;
+    for(unsigned numaNode : exp.getNumaList()) {
+        for(unsigned cpu : exp.getCpuListPerNuma(numaNode)) {
+            if(cpuInd > 0) {
+                m_workers[cpuInd-1].emplace(cpu);
+            } else {
+                m_worker0Cpu = cpu;
             }
-        }
-    } else {
-        unsigned cpuInd=0;
-        for(unsigned cpu : exp.getCpuListPerNuma(0)) {
-            if(cpuInd > 0)
-                m_workers[cpuInd].emplace(cpu);
             ++cpuInd;
         }
     }
 }
 
-void GameCG::doHalfIterationNuma(bool odd) {
+void GameCG::calcStats() {
+    // Important:
+    m_worker0AllDuration += m_worker0LastDuration;
+    m_worker0SumFreq += m_worker0LastFreq*static_cast<std::uint64_t>(m_worker0LastDuration.count());
+    ++m_halfIterCnt;
+
+
+    std::chrono::microseconds maxTime = getWorker0LastRunDuration();
+    std::chrono::microseconds minTime = getWorker0LastRunDuration();
+    for(unsigned i=1; i<m_exp->getCpuCnt(); ++i) {
+        maxTime = std::max(maxTime, m_workers[i-1]->getLastRunDuration()); // NOLINT
+        minTime = std::min(minTime, m_workers[i-1]->getLastRunDuration()); // NOLINT
+    }
+
+    m_waitingTime[0] += maxTime - getWorker0LastRunDuration();
+    for(unsigned i=1; i<m_exp->getCpuCnt(); ++i) {
+        m_waitingTime[i] += maxTime - m_workers[i-1]->getLastRunDuration();
+    }
+    m_lastWatingDelta = maxTime - minTime;
+    m_maxWatingDelta = std::max(m_maxWatingDelta, m_lastWatingDelta);
+    m_sumWatingDelta += m_lastWatingDelta;
+}
+
+void GameCG::doHalfIteration(bool odd) {
     unsigned cpuInd = 1;
     for(unsigned i=0; i<m_exp->getNumaList().size(); ++i) {
         unsigned numaNode = m_exp->getNumaList()[i];
@@ -358,14 +375,19 @@ void GameCG::doHalfIterationNuma(bool odd) {
                 continue;
             }
         
-            m_workers[cpuInd]->pushWork(GamePerThdWork{&m_map, i, 2*j+static_cast<unsigned>(odd), 
+            m_workers[cpuInd-1]->pushWork(GamePerThdWork{&m_map, i, 2*j+static_cast<unsigned>(odd), 
                                         m_rules, static_cast<unsigned int>(m_rng())});
             ++cpuInd;
         }
     }
 
+    auto clockStart = std::chrono::steady_clock::now();
     GamePerThdWork work1{&m_map, 0, static_cast<unsigned>(odd), m_rules, static_cast<unsigned int>(m_rng())};
     work1();
+    auto clockEnd = std::chrono::steady_clock::now();
+
+    m_worker0LastFreq = Utils::readCurCpuFreq(m_worker0Cpu);
+    m_worker0LastDuration = std::chrono::duration_cast<std::chrono::microseconds>(clockEnd - clockStart);
 
     cpuInd = 1;
     for(unsigned i=0; i<m_exp->getNumaList().size(); ++i) {
@@ -375,45 +397,41 @@ void GameCG::doHalfIterationNuma(bool odd) {
                 continue;
             }
         
-            m_workers[cpuInd]->waitFinish();
+            m_workers[cpuInd-1]->waitFinish();
             ++cpuInd;
         }
     }
-}
 
-void GameCG::doHalfIterationNoNuma(bool odd) {
-    unsigned cpuInd = 1;
-    unsigned numaNode = 0;
-    for(unsigned j=0; j<m_exp->getCpuListPerNuma(numaNode).size(); ++j) {
-        if(j == 0) {
-            continue;
-        }
-    
-        m_workers[cpuInd]->pushWork(GamePerThdWork{&m_map, 0, 2*j+static_cast<unsigned>(odd), 
-                                    m_rules, static_cast<unsigned int>(m_rng())});
-        ++cpuInd;
-    }
-
-    GamePerThdWork work1{&m_map, 0, static_cast<unsigned>(odd), m_rules, static_cast<unsigned int>(m_rng())};
-    work1();
-
-    cpuInd = 1;
-    for(unsigned j=0; j<m_exp->getCpuListPerNuma(numaNode).size(); ++j) {
-        if(j == 0) {
-            continue;
-        }
-    
-        m_workers[cpuInd]->waitFinish();
-        ++cpuInd;
-    }
+    calcStats();
 }
 
 void GameCG::doIteration() {
-    if(m_exp->isNuma()) {
-        doHalfIterationNuma(false);
-        doHalfIterationNuma(true);
-    } else { 
-        doHalfIterationNoNuma(false);
-        doHalfIterationNoNuma(true);
+    auto clockStart = std::chrono::steady_clock::now();
+    doHalfIteration(false);
+    doHalfIteration(true);
+    auto clockEnd = std::chrono::steady_clock::now();
+    std::chrono::microseconds diff = std::chrono::duration_cast<std::chrono::microseconds>(clockEnd - clockStart);
+    m_allTime += diff;
+}
+
+[[nodiscard]] std::vector<std::uint64_t> GameCG::getAvgFreqPerWorker() const {
+    std::vector<std::uint64_t> res(m_exp->getCpuCnt());
+
+    res[0] = getWorker0AvgFreq();
+    for(unsigned i=1; i<m_exp->getCpuCnt(); ++i) {
+        res[i] = m_workers[i-1]->getAvgFreq();  // NOLINT
     }
+
+    return res;
+}
+
+[[nodiscard]] std::vector<std::chrono::microseconds> GameCG::getAllRunDurationPerWorker() const {
+    std::vector<std::chrono::microseconds> res(m_exp->getCpuCnt());
+
+    res[0] = getWorker0AllRunDuration();
+    for(unsigned i=1; i<m_exp->getCpuCnt(); ++i) {
+        res[i] = m_workers[i-1]->getAllRunDuration();  // NOLINT
+    }
+
+    return res;
 }
