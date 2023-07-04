@@ -60,7 +60,7 @@ auto ExecutionPlanner::HTInfo::getInfo(const std::vector<unsigned> &cpuList)
         const std::string cpuPPIDPath{
             "/sys/devices/system/cpu/cpu" +
             std::to_string(cpu) +
-            "/topology/core_id"
+            "/topology/physical_package_id"
         };
         const std::string cpuCoreIDPath{
             "/sys/devices/system/cpu/cpu" +
