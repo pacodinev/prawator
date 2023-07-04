@@ -47,6 +47,15 @@ set_project_warnings(project_config)
 include(cmake/Sanitizers.cmake)
 enable_sanitizers(project_config)
 
+# Options and variables are here:
+
+option(WATOR_BUILD_MAP_READER "Option to enable building of map_reader binary" ON)
+option(WATOR_CPU_PIN "Optimisation: Pin tasks to CPUS" ON)
+option(WATOR_NUMA "Add support for NUMA" ON)
+option(WATOR_NUMA_OPTIMIZE "Optimize when the NUMA node is only one" ON)
+
+# project subdirectories:
+
 add_subdirectory(external)
 
 add_subdirectory(include)
@@ -62,13 +71,6 @@ if((CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME OR PARWATOR_BUILD_TESTING)
    AND BUILD_TESTING)
   add_subdirectory(tests)
 endif()
-
-# Options and variables are here:
-
-option(WATOR_BUILD_MAP_READER "Option to enable building of map_reader binary" ON)
-option(WATOR_CPU_PIN "Optimisation: Pin tasks to CPUS" ON)
-option(WATOR_NUMA "Add support for NUMA" ON)
-option(WATOR_NUMA_OPTIMIZE "Optimize when the NUMA node is only one" ON)
 
 # config.h gen:
 
