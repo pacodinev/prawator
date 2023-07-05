@@ -83,7 +83,7 @@ void printStats(WaTor::GameCG &game, std::ostream &out) {
 
 int main(int argc, char *argv[])
 {
-    if(argc != 12) {
+    if(argc != 12 && argc != 13) {
         std::clog << "Invalid number of arguments!\n";
         printHelp(std::clog);
         std::clog.flush();
@@ -101,6 +101,8 @@ int main(int argc, char *argv[])
     unsigned sharkStarveTime;
     unsigned iterCnt;
     const char *mapFilePath;
+    std::random_device rdv{};
+    unsigned seed = rdv();
     try { 
         unsigned curArg = 1;
         workerCnt = static_cast<unsigned>(std::strtol(argv[curArg++], nullptr, 10));
@@ -115,6 +117,9 @@ int main(int argc, char *argv[])
         sharkStarveTime = static_cast<unsigned>(std::strtol(argv[curArg++], nullptr, 10));
         iterCnt = static_cast<unsigned>(std::strtol(argv[10], nullptr, 10));
         mapFilePath = argv[11];
+        if(argc == 13) {
+            seed = static_cast<unsigned>(std::strtol(argv[12], nullptr, 10));
+        }
     } catch(std::exception &ex) {
         std::clog << ex.what() << '\n';
         printHelp(std::clog);
@@ -137,7 +142,6 @@ int main(int argc, char *argv[])
     WaTor::Rules rules{mapWidth, mapHeight, initFishCnt, initSharkCnt, 
                        fishBreedTime, sharkBreedTime, sharkStarveTime}; 
 
-    std::random_device rdv{};
 
     std::fstream fmap(mapFilePath, std::fstream::out | std::fstream::trunc);
     if(!fmap.is_open()) {
@@ -146,7 +150,7 @@ int main(int argc, char *argv[])
     }
     
     auto clockStart = std::chrono::steady_clock::now();
-    WaTor::GameCG game(rules, exp, rdv());
+    WaTor::GameCG game(rules, exp, seed);
     auto clockEnd = std::chrono::steady_clock::now();
     std::chrono::microseconds diff = std::chrono::duration_cast<std::chrono::microseconds>(clockEnd - clockStart);
     std::clog << "Allocating and generating map took: " 
