@@ -462,8 +462,6 @@ public:
         unsigned shift = 0;
         std::uint8_t buffer = 0;
 
-        // TODO: remove
-        volatile unsigned bytesWritten = 0;
         for(unsigned numaInd=0; numaInd<numaCount; ++numaInd) {
             for(unsigned lineInd=0; lineInd<perNuma[numaInd]->lines.size(); ++lineInd) {
                 for(std::size_t i=0; i<perNuma[numaInd]->lines[lineInd].map.size(); ++i) {
@@ -474,7 +472,6 @@ public:
                     if(shift >= 8) { // NOLINT
                         shift = 0;
                         fout.write(reinterpret_cast<const char*>(&buffer), sizeof(buffer)); // NOLINT
-                        ++bytesWritten;
                         buffer = 0;
                     }
                 }
@@ -484,7 +481,6 @@ public:
         if(shift != 0) {
             shift = 0;
             fout.write(reinterpret_cast<const char*>(&buffer), sizeof(buffer)); // NOLINT
-            ++bytesWritten;
             buffer = 0;
         }
 

@@ -1,3 +1,4 @@
+#include <bits/chrono.h>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -152,15 +153,29 @@ int main(int argc, char *argv[])
               << static_cast<double>(diff.count())/1000000.0 << " s\n";
     std::clog.flush();
 
+    std::chrono::microseconds saveMapTime{0};
+    clockStart = std::chrono::steady_clock::now();
     game.getMap().saveMap(fmap, true);
+    clockEnd = std::chrono::steady_clock::now();
+    saveMapTime += std::chrono::duration_cast<std::chrono::microseconds>(clockEnd-clockStart);
 
     for(unsigned i=0; i<iterCnt-1; ++i) {
         game.doIteration();
 
+        clockStart = std::chrono::steady_clock::now();
         game.getMap().saveMap(fmap);
+        clockEnd = std::chrono::steady_clock::now();
+        saveMapTime += std::chrono::duration_cast<std::chrono::microseconds>(clockEnd-clockStart);
     }
 
+    clockStart = std::chrono::steady_clock::now();
     fmap.close();
+    clockEnd = std::chrono::steady_clock::now();
+    saveMapTime += std::chrono::duration_cast<std::chrono::microseconds>(clockEnd-clockStart);
+
+    std::clog << "Saving map took: " 
+              << static_cast<double>(saveMapTime.count())/1000000.0 << " s\n";
+    std::clog.flush();
 
     printStats(game, std::cout);
 
