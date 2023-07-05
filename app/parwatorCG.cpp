@@ -1,3 +1,4 @@
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
@@ -123,6 +124,7 @@ int main(int argc, char *argv[])
         return 0;
     }
 
+
     ExecutionPlanner::initInst(workerCnt, enableUseOfHT);
 
     const ExecutionPlanner &exp = ExecutionPlanner::getInst();
@@ -142,7 +144,13 @@ int main(int argc, char *argv[])
         return 1;
     }
     
+    auto clockStart = std::chrono::steady_clock::now();
     WaTor::GameCG game(rules, exp, rdv());
+    auto clockEnd = std::chrono::steady_clock::now();
+    std::chrono::microseconds diff = std::chrono::duration_cast<std::chrono::microseconds>(clockEnd - clockStart);
+    std::clog << "Allocating and generating map took: " 
+              << static_cast<double>(diff.count())/1000000.0 << " s\n";
+    std::clog.flush();
 
     game.getMap().saveMap(fmap, true);
 
