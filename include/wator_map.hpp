@@ -102,7 +102,7 @@ private:
               newUp(width, false, mmr), newDown(width, false, mmr), updated(width, false, mmr), 
               map(width*height, Tile(), mmr) {
 
-            std::clog << "Creating line with: " << width << ' ' << height << '\n'; // TODO: comment out
+            // std::clog << "Creating line with: " << width << ' ' << height << '\n'; // TODO: comment out
         }
 
     };
