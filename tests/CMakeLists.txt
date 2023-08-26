@@ -2,7 +2,7 @@
 FetchContent_Declare(
   catch
   GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-  GIT_TAG  v2.13.6)
+  GIT_TAG  v2.13.10)
 FetchContent_MakeAvailable(catch)
 # Adds Catch2::Catch2
 
@@ -10,22 +10,19 @@ FetchContent_MakeAvailable(catch)
 add_library(catch_main STATIC catch_main.cpp)
 target_link_libraries(catch_main PUBLIC Catch2::Catch2)
 
-add_executable(test_execution_plannner test_execution_planner.cpp)
-target_link_libraries(test_execution_plannner PRIVATE catch_main
+set(COVERAGE_EXCLUDES ${PROJECT_SOURCE_DIR}/tests/* ${CMAKE_BINARY_DIR}/*)
+
+add_code_coverage_all_targets(EXCLUDE ${COVERAGE_EXCLUDES})
+
+add_executable(test_execution_planner execution_planner.cpp)
+target_link_libraries(test_execution_planner PRIVATE catch_main
     execution_planner project_config)
-add_test(NAME test_execution_plannner COMMAND test_execution_plannner)
+add_test(NAME test_execution_planner COMMAND test_execution_planner)
+target_code_coverage(test_execution_planner AUTO ALL EXCLUDE ${COVERAGE_EXCLUDES})
 
-#add_executable(LZW_test LZW_test.cpp)
-#target_link_libraries(LZW_test PRIVATE catch_main
-#    LZW project_config)
-#add_test(NAME LZW_test COMMAND LZW_test)
-#
-#add_executable(archive_parser_test archive_parser_test.cpp)
-#target_link_libraries(archive_parser_test PRIVATE catch_main
-#    archive_parser project_config)
-#add_test(NAME archive_parser_test COMMAND archive_parser_test)
+add_executable(test_wator wator_tile.cpp wator_line.cpp wator_map_numa.cpp wator_map.cpp)
+target_link_libraries(test_wator PRIVATE catch_main
+    wator project_config)
+add_test(NAME test_wator COMMAND test_wator)
+target_code_coverage(test_wator AUTO ALL EXCLUDE ${COVERAGE_EXCLUDES})
 
-#add_executable(tree_test tree_test.cpp)
-#target_link_libraries(tree_test PRIVATE catch_main
-#    tree project_config)
-#add_test(NAME tree_test COMMAND tree_test)

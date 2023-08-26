@@ -2,12 +2,14 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstddef>
 #include <filesystem>
 #include <locale>
 #include <set>
 #include <stdexcept>
 #include <vector>
 #include <fstream>
+#include <map>
 
 #include <numa.h>
 
@@ -17,297 +19,265 @@ static constexpr const char* linuxSysFSCPUPath{"/sys/devices/system/cpu"};
 
 std::optional<ExecutionPlanner> ExecutionPlanner::instance; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
-std::vector<unsigned> ExecutionPlanner::getCPUList() 
-{
-    std::vector<unsigned> res;
-    using namespace std::filesystem;
-    const path cpuSysFS{linuxSysFSCPUPath};
+namespace {
 
-    for(const auto& dirEntry : directory_iterator{cpuSysFS})
-    {
-        if(!dirEntry.is_directory()) { continue; }
-
-        const std::string &dirEntryName{dirEntry.path().filename().string()};
-        if(dirEntryName.find("cpu") != 0) { continue; }
-
-        const std::string cpuIDStr{dirEntryName.substr(3)};
-
-        std::locale loc;
-        auto isDigit = [&loc](char chr) -> bool {
-            return std::isdigit(chr, loc);
-        };
-
-        if(!std::all_of(cpuIDStr.begin(), cpuIDStr.end(), isDigit)) { continue; }
-        
-        unsigned long cpuID{std::stoul(cpuIDStr)};
-        res.push_back(static_cast<unsigned>(cpuID));
-
+// works only for sorted container!!!
+template<class It>
+bool areDifferent(It beg, It end) {
+    It prev = beg;
+    ++beg; 
+    while(beg != end) {
+        if(*prev == *beg) {
+            return false;
+        }
+        ++prev; ++beg;
     }
 
-    res.shrink_to_fit();
-    std::sort(res.begin(), res.end());
-
-    return res;
+    return true;
 }
 
-auto ExecutionPlanner::HTInfo::getInfo(const std::vector<unsigned> &cpuList) 
-    -> ExecutionPlanner::HTInfo {
-    ExecutionPlanner::HTInfo res;
-    const unsigned lastCPU = cpuList.back();
-    res.m_cpiIDS.resize(lastCPU+1, NOCPU);
+}
 
-    for(const unsigned cpu : cpuList) {
+ExecutionPlanner::ExecutionPlanner(std::vector<unsigned> numaList, 
+                              std::vector<std::vector<unsigned>> cpuPerNuma) 
+    : m_numaList(std::move(numaList)), m_cpuPerNuma(std::move(cpuPerNuma)),
+      m_cpuCnt{0}, m_isNuma{m_numaList.size() > 1 || (m_numaList.size() == 1 && m_numaList.back() != 0)} {
+    assert(!m_numaList.empty());
+    assert(!m_cpuPerNuma.empty());
+    assert(m_numaList.size() == m_cpuPerNuma.size());
+    assert(std::is_sorted(m_numaList.begin(), m_numaList.end()) == true);
+    // m_cpuCnt is zero
+    for(unsigned i=0; i<m_numaList.size(); ++i) {
+        const std::vector<unsigned> &curCpuList = m_cpuPerNuma[i];
+        m_cpuCnt += curCpuList.size();
+        assert(std::is_sorted(curCpuList.begin(), curCpuList.end()) == true);
+    }
+#ifndef NDEBUG
+    std::vector<unsigned> allCpuList;
+    for(unsigned i=0; i<m_numaList.size(); ++i) {
+        const std::vector<unsigned> &curCpuList = m_cpuPerNuma[i];
+        assert(std::is_sorted(curCpuList.begin(), curCpuList.end()) == true);
+        std::copy(curCpuList.begin(), curCpuList.end(), std::back_inserter(allCpuList));
+    }
+
+    std::sort(allCpuList.begin(), allCpuList.end());
+    assert(areDifferent(allCpuList.begin(), allCpuList.end()));
+#endif
+    
+}
+
+
+namespace {
+    std::vector<unsigned> getCPUList() 
+    {
+        std::vector<unsigned> res;
+        using namespace std::filesystem;
+        const path cpuSysFS{linuxSysFSCPUPath};
+
+        for(const auto& dirEntry : directory_iterator{cpuSysFS})
+        {
+            if(!dirEntry.is_directory()) { continue; }
+
+            const std::string &dirEntryName{dirEntry.path().filename().string()};
+            if(dirEntryName.find("cpu") != 0) { continue; }
+
+            const std::string cpuIDStr{dirEntryName.substr(3)};
+
+            std::locale loc;
+            auto isDigit = [&loc](char chr) -> bool {
+                return std::isdigit(chr, loc);
+            };
+
+            if(!std::all_of(cpuIDStr.begin(), cpuIDStr.end(), isDigit)) { continue; }
+            
+            unsigned long cpuID{std::stoul(cpuIDStr)};
+            res.push_back(static_cast<unsigned>(cpuID));
+
+        }
+
+        res.shrink_to_fit();
+        std::sort(res.begin(), res.end());
+
+        return res;
+    }
+
+    unsigned getPhysicalPackageId(unsigned cpu) {
         const std::string cpuPPIDPath{
             "/sys/devices/system/cpu/cpu" +
             std::to_string(cpu) +
             "/topology/physical_package_id"
         };
+        std::fstream cpuPPIDFile{cpuPPIDPath, std::fstream::in};
+        unsigned PPID;
+        cpuPPIDFile >> PPID;
+        if(cpuPPIDFile.fail()) {
+            throw std::runtime_error("Failed to read " + cpuPPIDPath);
+        }
+        cpuPPIDFile.close();
+
+        return PPID;
+    }
+
+    unsigned getCoreID(unsigned cpu) {
         const std::string cpuCoreIDPath{
             "/sys/devices/system/cpu/cpu" +
             std::to_string(cpu) +
             "/topology/core_id"
         };
-        std::fstream cpuPPIDFile{cpuPPIDPath, std::fstream::in};
         std::fstream cpuCoreIDFile{cpuCoreIDPath, std::fstream::in};
-        unsigned PPID;
         unsigned coreID;
-        cpuPPIDFile >> PPID;
         cpuCoreIDFile >> coreID;
-        if(cpuPPIDFile.fail() || cpuCoreIDFile.fail()) {
-            throw std::runtime_error("Failed to read " + cpuPPIDPath + " or " + cpuCoreIDPath);
+        if(cpuCoreIDFile.fail()) {
+            throw std::runtime_error("Failed to read " + cpuCoreIDPath);
         }
         cpuCoreIDFile.close();
 
-        res.m_cpiIDS[cpu] = {PPID, coreID};
+        return coreID;
+    }
+}
+
+ExecutionPlanner::NumaList ExecutionPlanner::getCpuArchitecture(bool isNuma) {
+    NumaList res;
+#ifdef WATOR_NUMA
+    if(isNuma) {
+        res.resize(numa_max_node()+1);
+    } else { 
+        res.resize(1);
+    }
+#else
+    res.resize(1);
+#endif
+
+    std::vector<unsigned> cpuList = getCPUList();
+
+    // physical_package_id, core_id
+    using PpidCoreID = std::pair<unsigned, unsigned>;
+
+    std::map<PpidCoreID, ThreadList*> cpuToSiblingList;
+
+    for(unsigned cpu : cpuList) {
+        PpidCoreID curCpuIDs = std::make_pair(getPhysicalPackageId(cpu),
+                                              getCoreID(cpu));
+        if(cpuToSiblingList.count(curCpuIDs) > 0) {
+            ThreadList &curThdList = *cpuToSiblingList[curCpuIDs];
+            curThdList.push_back(cpu);
+        } else {
+            unsigned curNuma = 0;
+#ifdef WATOR_NUMA 
+            if(isNuma) {
+                curNuma = numa_node_of_cpu(cpu);
+            }
+#endif
+
+            res.at(curNuma).push_back({cpu});
+            ThreadList *curThdList = &res.at(curNuma).back();
+            cpuToSiblingList[curCpuIDs] = curThdList;
+        }
     }
 
-    res.m_cpiIDS.shrink_to_fit();
     return res;
 }
 
-void ExecutionPlanner::solveNoNumaHt(unsigned numThreads)
-{
-    m_isNuma = false;
-    std::vector<unsigned> cpuList = getCPUList();
+void ExecutionPlanner::buildFromCPUList(const NumaList &cpuArch, std::vector<unsigned> &cpuList) {
+    m_cpuPerNuma.resize(cpuArch.size());
+    m_cpuCnt = static_cast<unsigned>(cpuList.size());
+    for(unsigned numa=0; numa<cpuArch.size(); ++numa) {
+        bool firstUseNuma{true};
+        for(unsigned cpu=0; cpu<cpuArch[numa].size(); ++cpu) {
+            for(unsigned thread=0; thread<cpuArch[numa][cpu].size(); ++thread) {
+                unsigned curCpu = cpuArch[numa][cpu][thread];
 
-    if(numThreads > cpuList.size()) {
-        throw std::runtime_error("Machine has lower number of CPUs than requested");
-    }
+                if(std::binary_search(cpuList.begin(), cpuList.end(), curCpu)) {
+                    if(firstUseNuma) {
+                        firstUseNuma = false;
+                        m_numaList.push_back(numa);
+                    }
 
-    // add a virtual NUMA node
-    m_numaList.push_back(0);
-    m_numaList.shrink_to_fit();
-
-    m_cpuPerNuma.resize(1);
-    m_cpuPerNuma[0].assign(cpuList.begin(), cpuList.begin()+numThreads);
-}
-
-void ExecutionPlanner::solveNoNumaNoHt(unsigned numThreads)
-{
-    m_isNuma = false;
-    std::vector<unsigned> cpuList = getCPUList();
-
-    if(numThreads > cpuList.size()) {
-        throw std::runtime_error("Machine has lower number of CPUs than requested");
-    }
-
-    // add a virtual NUMA node
-    m_numaList.push_back(0);
-    m_numaList.shrink_to_fit();
-
-    HTInfo hti = HTInfo::getInfo(cpuList);
-
-    std::set<HTInfo::CpuIDS> used;
-
-    m_cpuPerNuma.resize(1);
-    m_cpuPerNuma[0].reserve(numThreads);
-
-    for(unsigned cpu : cpuList) {
-        HTInfo::CpuIDS cpuIDs = hti.m_cpiIDS[cpu];
-        assert(cpuIDs != HTInfo::NOCPU);
-        if(used.count(cpuIDs) > 0) { continue; }
-        used.insert(cpuIDs);
-        m_cpuPerNuma[0].push_back(cpu);
-        if(m_cpuPerNuma[0].size() == numThreads) {
-            break; 
-        }
-    }
-
-    if(m_cpuPerNuma[0].size() != numThreads) {
-        throw std::runtime_error("Machine has lower number of CPUs than requested");
-    }
-}
-
-#ifdef WATOR_NUMA
-
-void ExecutionPlanner::solveNumaHt(unsigned numThreads)
-{
-#ifdef WATOR_NUMA_OPTIMIZE 
-    if(numa_num_task_nodes() <= 1) {
-        // just lie :)
-        solveNoNumaHt(numThreads);
-        return;
-    }
-#endif
-
-    m_isNuma = true;
-    numa_exit_on_error = 1;
-
-    int maxNumaNode = numa_max_node();
-    std::vector<unsigned> cpuList = getCPUList();
-
-    m_cpuPerNuma.resize(maxNumaNode+1);
-
-    unsigned curAllocCpus = 0;
-
-    struct bitmask *cpuMask = numa_allocate_cpumask();
-
-    for(int numaNode=0; numaNode<=maxNumaNode; ++numaNode) {
-        numa_node_to_cpus(numaNode, cpuMask);
-        for(unsigned cpu : cpuList) {
-            if(numa_bitmask_isbitset(cpuMask, static_cast<unsigned>(cpu)) == 1) {
-                m_cpuPerNuma[numaNode].push_back(cpu);
-                ++curAllocCpus;
-                if(curAllocCpus == numThreads) {
-                    break;
+                    m_cpuPerNuma[numa].push_back(curCpu);
                 }
             }
         }
-        if(curAllocCpus == numThreads) {
-            break;
-        }
     }
-
-    numa_bitmask_free(cpuMask);
-
-    if(curAllocCpus != numThreads) {
-        throw std::runtime_error("Machine has lower number of CPUs than requested");
-    }
-
-    for(unsigned i=0; i<m_cpuPerNuma.size(); ++i) {
-        std::vector<unsigned> &numa = m_cpuPerNuma[i];
-        numa.shrink_to_fit();
-        if(!numa.empty()) {
-            m_numaList.push_back(i);
-        }
-    }
-
-    m_numaList.shrink_to_fit();
 }
 
-void ExecutionPlanner::solveNumaNoHt(unsigned numThreads)
-{
-#ifdef WATOR_NUMA_OPTIMIZE 
-    if(numa_num_task_nodes() <= 1) {
-        // just lie
-        solveNoNumaNoHt(numThreads);
-        return;
+void ExecutionPlanner::buildFromCPUArch(const NumaList &cpuArch, unsigned numThreads, bool enableHT) {
+    std::vector<std::vector<ThreadList::const_iterator>> usedThreads;
+    usedThreads.resize(cpuArch.size());
+    for(std::size_t i=0; i<cpuArch.size(); ++i) {
+        usedThreads[i].resize(cpuArch[i].size());
+        for(std::size_t j=0; j<cpuArch[i].size(); ++j) {
+            usedThreads[i][j] = cpuArch[i][j].cbegin();
+        }
     }
-#endif
 
-    m_isNuma = true;
-    std::vector<unsigned> cpuList = getCPUList();
-    HTInfo hti = HTInfo::getInfo(cpuList);
-    
-    std::set<HTInfo::CpuIDS> used;
+    std::vector<unsigned> useCpus;
 
-    numa_exit_on_error = 1;
+    while(useCpus.size() < numThreads) {
+        bool addedCPU{false};
+        for(unsigned numa=0; numa<cpuArch.size(); ++numa) {
+            for(unsigned cpu=0; cpu<cpuArch[numa].size(); ++cpu) {
+                if(usedThreads[numa][cpu] == cpuArch[numa][cpu].cend()) {
+                    continue;
+                }
+                if(!enableHT && usedThreads[numa][cpu] != cpuArch[numa][cpu].cbegin()) {
+                    continue;
+                }
 
-    int maxNumaNode = numa_max_node();
+                useCpus.push_back(*usedThreads[numa][cpu]);
+                ++usedThreads[numa][cpu];
+                addedCPU = true;
 
-    m_cpuPerNuma.resize(maxNumaNode+1);
-
-    unsigned curAllocCpus = 0;
-
-    struct bitmask *cpuMask = numa_allocate_cpumask();
-
-    for(int numaNode=0; numaNode<=maxNumaNode; ++numaNode) {
-        numa_node_to_cpus(numaNode, cpuMask);
-        for(unsigned cpu : cpuList) {
-            HTInfo::CpuIDS cpuIDs = hti.m_cpiIDS[cpu];
-            assert(cpuIDs != HTInfo::NOCPU);
-            if(numa_bitmask_isbitset(cpuMask, static_cast<unsigned>(cpu)) == 1 &&
-                used.count(cpuIDs) == 0) {
-                used.insert(cpuIDs);
-                m_cpuPerNuma[numaNode].push_back(cpu);
-                ++curAllocCpus;
-                if(curAllocCpus == numThreads) {
+                if(useCpus.size() == numThreads) {
                     break;
                 }
             }
+            if(useCpus.size() == numThreads) {
+                break;
+            }
         }
-        if(curAllocCpus == numThreads) {
-            break;
-        }
-    }
 
-    numa_bitmask_free(cpuMask);
-
-    if(curAllocCpus != numThreads) {
-        throw std::runtime_error("Machine has lower number of CPUs than requested");
-    }
-
-    for(unsigned i=0; i<m_cpuPerNuma.size(); ++i) {
-        std::vector<unsigned> &numa = m_cpuPerNuma[i];
-        numa.shrink_to_fit();
-        if(!numa.empty()) {
-            m_numaList.push_back(i);
+        if(!addedCPU && useCpus.size() < numThreads) {
+            throw std::runtime_error("Machine has lower number of CPUs than requested");
         }
     }
 
-    m_numaList.shrink_to_fit();
+    std::sort(useCpus.begin(), useCpus.end());
+
+    buildFromCPUList(cpuArch, useCpus);
 }
 
-#else //WATOR_NUMA
-void ExecutionPlanner::solveNumaHt(unsigned numThreads) {
-    solveNoNumaHt(numThreads);
-}
-
-void ExecutionPlanner::solveNumaNoHt(unsigned numThreads) {
-    solveNoNumaNoHt(numThreads);
-}
-#endif
-
+// numThreads should be atleast 1
 ExecutionPlanner::ExecutionPlanner(unsigned numThreads, bool enableHT) {
-#ifdef WATOR_NUMA
-    if(numa_available() < 0 && enableHT) {
-        solveNoNumaHt(numThreads);
-    } else if(numa_available() < 0 && !enableHT) {
-        solveNoNumaNoHt(numThreads);
-    } else if(numa_available() >= 0 && enableHT) {
-        solveNumaHt(numThreads);
-    } else {
-        solveNumaNoHt(numThreads);
-    }
-#else 
-    if(enableHT) {
-        solveNoNumaHt(numThreads);
-    } else { // if(!enableHT) 
-        solveNoNumaNoHt(numThreads);
+    assert(numThreads > 0);
+
+#ifdef WATOR_NUMA 
+    m_isNuma = (numa_available() >= 0); // NOLINT
+    numa_exit_on_warn = 1;
+    numa_exit_on_error = 1;
+#ifdef WATOR_NUMA_OPTIMIZE
+    if(m_isNuma && numa_max_node() == 0) { // TODO: check errors
+        // just lie!
+        m_isNuma = false;
     }
 #endif
+#else
+    m_isNuma = false;
+#endif
 
-    this->m_cpuCnt = numThreads;
+    NumaList cpuArch = getCpuArchitecture(m_isNuma);
+
+    buildFromCPUArch(cpuArch, numThreads, enableHT);
 }
 
 void ExecutionPlanner::printStats(std::ostream &out) const {
-    if(isNuma())
-    {
-        out << "ExecutionPlanner: NUMA is enabled!\n";
+    out << "ExecutionPlanner: NUMA is " << (isNuma() ? "enabled\n" : "NOT supported\n");
         
-        for(unsigned numa : getNumaList()) {
-            out << "ExecutionPlanner: NUMA" << numa 
-                << ' ';
-            for(unsigned cpu: getCpuListPerNuma(numa)) {
-                out << " CPU" << cpu;
-            }
-            out << '\n';
+    for(unsigned numa : getNumaList()) {
+        out << "ExecutionPlanner: ";
+        if(isNuma()) {
+            out << "NUMA" << numa << ' ';
         }
-    } else {
-        out << "ExecutionPlanner: NUMA is NOT supported!\n";
-        
-        out << "ExecutionPlanner:";
-        for(unsigned cpu: getCpuListPerNuma(0)) {
+        for(unsigned cpu: getCpuListPerNuma(numa)) {
             out << " CPU" << cpu;
         }
         out << '\n';

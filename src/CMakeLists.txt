@@ -14,15 +14,20 @@ add_executable(test_LFSR test_LFSR.cpp)
 target_link_libraries(test_LFSR PRIVATE catch_main project_config)
 add_test(NAME test_LFSR COMMAND test_LFSR)
 
-add_library(execution_planner STATIC "execution_planner.cpp")
+add_library(execution_planner STATIC execution_planner.cpp)
 #target_compile_features(LZW PUBLIC cxx_rvalue_references cxx_std_11)
-target_include_directories(execution_planner PUBLIC "../include")
+target_include_directories(execution_planner PUBLIC "${PROJECT_SOURCE_DIR}/include")
 target_link_libraries(execution_planner PRIVATE project_config)
 if(WATOR_NUMA)
     target_link_libraries(execution_planner PRIVATE -lnuma)
 endif(WATOR_NUMA)
+target_code_coverage(execution_planner)
 
-add_library(wator_gamecg STATIC "wator_gamecg.cpp")
-#target_compile_features(LZW PUBLIC cxx_rvalue_references cxx_std_11)
-target_include_directories(wator_gamecg PUBLIC "../include")
-target_link_libraries(wator_gamecg PRIVATE project_config)
+add_library(wator STATIC wator_map.cpp 
+                         wator_simulation_worker.cpp
+                         wator_simulation.cpp
+    # wator_gamecg.cpp # TODO: this
+            )
+target_include_directories(wator PUBLIC "../include")
+target_link_libraries(wator PRIVATE execution_planner project_config)
+target_code_coverage(wator)

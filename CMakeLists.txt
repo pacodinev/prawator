@@ -33,6 +33,14 @@ if(${CMAKE_VERSION} VERSION_LESS 3.14)
   include(cmake/add_FetchContent_MakeAvailable.cmake)
 endif()
 
+# add external library argparse
+FetchContent_Declare(
+    argparse
+    GIT_REPOSITORY https://github.com/p-ranav/argparse.git
+    GIT_TAG v2.9
+)
+FetchContent_MakeAvailable(argparse)
+
 
 
 # Link this 'library' to use for configuration
@@ -46,6 +54,10 @@ set_project_warnings(project_config)
 # sanitizer options if supported by compiler
 include(cmake/Sanitizers.cmake)
 enable_sanitizers(project_config)
+
+# code coverage
+include(cmake/code-coverage.cmake)
+
 
 # Options and variables are here:
 

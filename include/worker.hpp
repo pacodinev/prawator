@@ -11,6 +11,7 @@
 #include <mutex>
 #include <string>
 #include <filesystem>
+#include <queue>
 
 #include "utils.hpp"
 
@@ -19,16 +20,16 @@
 template<class T>
 class Worker {
 private:
-    std::optional<T> m_work;
+    std::queue<T> m_workQueue;
     mutable std::mutex m_lock;
-    mutable std::condition_variable m_waitForTask, m_taskReady;
+    mutable std::condition_variable m_taskEnqueued, m_queueEmpty;
     std::optional<std::thread> m_thread;
     std::chrono::microseconds m_runDuration = std::chrono::microseconds{0};
     std::chrono::microseconds m_lastDuration = std::chrono::microseconds{0};
     std::uint64_t m_sumFreq = 0; // in kHz
     std::uint64_t m_lastFreq = 0; // in kHz
     unsigned m_cpuPin = 0;
-    bool m_isRunnig = false, m_timeToDie = false;
+    bool m_timeToDie = false;
 
 
     void calcStats() {
@@ -50,38 +51,50 @@ private:
     void setCpuMask() noexcept { }
 #endif
 
+    // expects m_lock to be locked
+    // and m_work is not empty
+    void doWork(std::unique_lock<std::mutex> &ulk) noexcept {
+        assert(!m_workQueue.empty());
+
+        if(m_workQueue.empty()) { 
+            return;
+        }
+    
+        T &work = m_workQueue.front();
+
+        ulk.unlock();
+
+        auto clockStart = std::chrono::steady_clock::now();
+        try {
+            work();
+        } catch(...) { /* do nothing */ }
+        auto clockEnd = std::chrono::steady_clock::now();
+        // work is finished
+        ulk.lock();
+        m_lastFreq = Utils::readCurCpuFreq(m_cpuPin);
+
+        m_workQueue.pop(); // delete work object
+
+        m_lastDuration = std::chrono::duration_cast<std::chrono::microseconds>(clockEnd - clockStart);
+        calcStats();
+    }
+
     void workFn() noexcept {
         setCpuMask();
 
         std::unique_lock<std::mutex> ulk(m_lock);
 
-        while(true) {
-            while(!m_work.has_value() && !m_timeToDie) {
-                m_waitForTask.wait(ulk);
+        while(!m_workQueue.empty() || !m_timeToDie) {
+            while(m_workQueue.empty() && !m_timeToDie) {
+                m_taskEnqueued.wait(ulk);
             }
-            if(!m_work.has_value() && m_timeToDie) {
-                return;
+            
+            if(!m_workQueue.empty()) {
+                doWork(ulk);
+                if(m_workQueue.empty()) {
+                    m_queueEmpty.notify_all();
+                }
             }
-
-            // there is work
-            m_isRunnig = true;
-            ulk.unlock();
-
-            auto clockStart = std::chrono::steady_clock::now();
-            try {
-                m_work->operator()();
-            } catch(...) { /* do nothing */ }
-            auto clockEnd = std::chrono::steady_clock::now();
-
-            // work is finished
-            ulk.lock();
-            m_lastFreq = Utils::readCurCpuFreq(m_cpuPin);
-            m_lastDuration = std::chrono::duration_cast<std::chrono::microseconds>(clockEnd - clockStart);
-            calcStats();
-            m_isRunnig = false;
-            m_work.reset();
-
-            m_taskReady.notify_all();
         }
     }
     
@@ -93,16 +106,10 @@ public:
 
     Worker() = default;
 
-    explicit Worker(unsigned cpuPin) : m_cpuPin(cpuPin) {
-        std::unique_lock<std::mutex> ulk(m_lock);
-
-        m_thread = std::thread(workerCall, this);
-    }
-
     Worker(const Worker&) = delete;
     Worker& operator=(const Worker&) = delete;
-    // Worker(Worker&&) = default; // NOLINT
-    // Worker& operator=(Worker&&) = default; // NOLINT
+    Worker(Worker&&) noexcept = default;
+    Worker& operator=(Worker&&) noexcept = default;
     
     ~Worker() noexcept {
         std::unique_lock<std::mutex> ulk(m_lock);
@@ -116,26 +123,47 @@ public:
         assert(thd.joinable());
 
         m_timeToDie = true;
-        m_waitForTask.notify_one();
+        m_taskEnqueued.notify_one();
         ulk.unlock();
 
         thd.join();
     }
 
-    void pushWork(T work) {
+    void startThread(unsigned cpuPin) {
         std::unique_lock<std::mutex> ulk(m_lock);
-        while(m_isRunnig) {
-            m_taskReady.wait(ulk);
+        assert(!m_thread.has_value());
+
+        m_cpuPin = cpuPin;
+
+        m_thread = std::thread(workerCall, this);
+    }
+
+    void runOnThisThread() { // TODO: cpuPin
+        std::unique_lock<std::mutex> ulk(m_lock);
+        assert(!m_thread.has_value()); // it would probably work (if bellow is uncommented) but 
+                                       // probably the programmer made mistake
+
+        while(!m_workQueue.empty()) {
+            doWork(ulk);
         }
 
-        m_work.emplace(std::move(work));
-        m_waitForTask.notify_one();
+        // m_queueEmpty.notify_one();
+    }
+
+    void pushWork(T work) {
+        std::unique_lock<std::mutex> ulk(m_lock);
+
+        m_workQueue.emplace(std::move(work));
+        m_taskEnqueued.notify_one();
     }
 
     void waitFinish() const {
         std::unique_lock<std::mutex> ulk(m_lock);
-        while(m_isRunnig) {
-            m_taskReady.wait(ulk);
+        if(m_workQueue.empty()) {
+            return;
+        }
+        while(!m_workQueue.empty()) {
+            m_queueEmpty.wait(ulk);
         }
     }
     

@@ -1,7 +1,8 @@
 #pragma once
 
 #include "execution_planner.hpp"
-#include "wator_map.hpp"
+#include "map.hpp"
+#include "entity.hpp"
 #include "wator_rules.hpp"
 #include "worker.hpp"
 #include "../src/lfsr_engine.hpp" // TODO: this!!!
@@ -25,7 +26,7 @@ private:
         unsigned m_numaInd, m_line;
 
         auto findTiles(const std::array<Map::Cordinate, 4> &dirs,
-                        Map::Entity entSearch, unsigned &resSize) const
+                        Entity entSearch, unsigned &resSize) const
             -> std::array<unsigned, 4> ;
 
         auto findTilesFish(const std::array<Map::Cordinate, 4> &dirs,
@@ -37,11 +38,11 @@ private:
             -> std::array<unsigned, 4> ;
 
         template<class T, bool midInLine>
-        [[nodiscard]] T updateFish(const Map::Cordinate &curCord, Map::Tile &curTile,
+        [[nodiscard]] T updateFish(const Map::Cordinate &curCord, Tile &curTile,
                         const std::array<Map::Cordinate, 4> &dirs);
 
         template<class T, bool midInLine>
-        [[nodiscard]] T updateShark(const Map::Cordinate &curCord, Map::Tile &curTile,
+        [[nodiscard]] T updateShark(const Map::Cordinate &curCord, Tile &curTile,
                         const std::array<Map::Cordinate, 4> &dirs);
 
         template<unsigned vertLevel>

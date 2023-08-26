@@ -31,75 +31,38 @@ private:
 
 
     // private member functions
+    using ThreadList = std::vector<unsigned>;
+    using CpuList = std::vector<ThreadList>;
+    using NumaList = std::vector<CpuList>;
 
-    static std::vector<unsigned> getCPUList();
+    static NumaList getCpuArchitecture(bool isNuma);
 
-    struct HTInfo {
-        struct CpuIDS {
-            unsigned physicalPackageID;
-            unsigned coreID;
-            bool operator== (const CpuIDS &other) const {
-                return coreID == other.coreID && physicalPackageID == other.physicalPackageID;
-            }
-            bool operator< (const CpuIDS &other) const {
-                if(physicalPackageID == other.physicalPackageID) {
-                    return coreID < other.coreID;
-                }
-                return physicalPackageID < other.physicalPackageID;
-            }
-            bool operator!= (const CpuIDS &other) const {
-                return !((*this) == other);
-            }
-        };
+    // cpuList should be sorted!
+    void buildFromCPUList(const NumaList &cpuArch, std::vector<unsigned> &cpuList);
 
-        std::vector<CpuIDS> m_cpiIDS;
-        //struct CoreIDToCpuMap {
-        //    unsigned CoreID;
-        //    unsigned cpu;
-        //    bool operator< (const struct CoreIDToCpuMap &other) {
-        //        if(CoreID == other.CoreID)
-        //            return cpu < other.cpu;
-        //        return CoreID < other.CoreID;
-        //    }
-        //};
-        //std::vector<CoreIDToCpuMap> m_coreIDToCpu;
+    void buildFromCPUArch(const NumaList &cpuArch, unsigned numThreads, bool enableHT);
 
-        static constexpr CpuIDS NOCPU = {std::numeric_limits<unsigned>::max(), 
-                                         std::numeric_limits<unsigned>::max()};
-
-        static HTInfo getInfo(const std::vector<unsigned> &cpuList);
-    };
-
-    // called inside constructor
-    void solveNoNumaHt(unsigned numThreads);
-
-    // called inside constructor
-    void solveNoNumaNoHt(unsigned numThreads);
-
-    // called inside constructor
-    void solveNumaHt(unsigned numThreads);
-
-    // called inside constructor
-    void solveNumaNoHt(unsigned numThreads);
+    ExecutionPlanner(std::vector<unsigned> numaList, std::vector<std::vector<unsigned>> cpuPerNuma);
 
 public:
 
-    // static constexpr unsigned NONUMA = std::numeric_limits<unsigned>::max();
-
     ExecutionPlanner(unsigned numThreads, bool enableHT);
+
+    static ExecutionPlanner makeMock(std::vector<unsigned> numaList, 
+                        std::vector<std::vector<unsigned>> cpuPerNuma) {
+        return ExecutionPlanner{std::move(numaList), std::move(cpuPerNuma)};
+    }
 
     [[nodiscard]] bool isNuma() const { return m_isNuma; }
     [[nodiscard]] auto getNumaList() const
     -> const std::vector<unsigned>& { return m_numaList; }
-    // for NonNUMA system use numaNode = 0
-    [[nodiscard]] auto getCpuListPerNuma(unsigned numaNode) const
+    // for NonNUMA system use numaInd = 0
+    // .getNumaList()[numaInd] == numaNode <=> .getCpuListPerNuma(numaInd)
+    [[nodiscard]] auto getCpuListPerNuma(unsigned numaInd) const
     -> const std::vector<unsigned>& {
-        assert(isNuma() || numaNode == 0);
-        if(numaNode > m_cpuPerNuma.size()) {
-            throw std::invalid_argument("numaNode is larger than numaNodes on system");
-        }
+        assert(isNuma() || numaInd == 0);
 
-        return m_cpuPerNuma[numaNode];
+        return m_cpuPerNuma[numaInd];
     }
     [[nodiscard]] unsigned getCpuCnt() const { return m_cpuCnt; }
 
