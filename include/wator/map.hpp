@@ -102,7 +102,7 @@ public:
 #else
 // NUMA aware allocation strategy for WaTor::Map
 // WARNING: NO NUMA support compiled, using NON Numa alloc strategy
-using NumaAllocStrategy = BasicAllocStrategy;
+using NumaAllocStrategy = MockAllocStrategy;
 
 #endif
 

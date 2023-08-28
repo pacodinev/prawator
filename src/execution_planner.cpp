@@ -11,7 +11,9 @@
 #include <fstream>
 #include <map>
 
+#ifdef WATOR_NUMA
 #include <numa.h>
+#endif
 
 #include <config.h>
 
