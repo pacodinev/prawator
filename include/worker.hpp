@@ -33,10 +33,10 @@ private:
 
 
     void calcStats() {
-        if(m_lastFreq == 0) { return; }
-        
         m_runDuration += m_lastDuration;
-        m_sumFreq += m_lastFreq*m_lastDuration.count();
+        if(m_lastFreq == 0) {
+            m_sumFreq += m_lastFreq*m_lastDuration.count();
+        }
     }
 
 #ifdef WATOR_CPU_PIN
