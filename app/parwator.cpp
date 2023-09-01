@@ -64,8 +64,8 @@ argparse::ArgumentParser buildArgParser() {
         .help("Number of threads to run the simulation on, by default it uses all")
         .default_value(static_cast<unsigned>(std::thread::hardware_concurrency()))
         .scan<'u', unsigned>();
-    res.add_argument("--enable-ht", "-H")
-        .help("Enables the use of hyperthreaded cores").default_value(true).implicit_value(true);
+    res.add_argument("--disable-ht", "-H")
+        .help("Disables the use of hyperthreaded cores").default_value(true).implicit_value(true);
     res.add_argument("--seed")
         .help("Provides seed for random number generation, warning: output is depending also on thread count")
         .scan<'u', unsigned>();
@@ -113,7 +113,7 @@ int main(int argc, char *argv[])
     arg.parse_args(argc, argv);
 
     ExecutionPlanner::initInst(arg.get<unsigned>("--workers"), 
-                               arg.get<bool>("--enable-ht"));
+                               !arg.get<bool>("--disable-ht"));
 
     const ExecutionPlanner &exp = ExecutionPlanner::getInst();
 
