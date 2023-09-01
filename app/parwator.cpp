@@ -12,7 +12,6 @@
 #include <thread>
 #include <random>
 
-#include "_deps/catch-src/single_include/catch2/catch.hpp"
 #include "execution_planner.hpp"
 
 #include "posixFostream.hpp"
@@ -65,7 +64,7 @@ argparse::ArgumentParser buildArgParser() {
         .default_value(static_cast<unsigned>(std::thread::hardware_concurrency()))
         .scan<'u', unsigned>();
     res.add_argument("--disable-ht", "-H")
-        .help("Disables the use of hyperthreaded cores").default_value(true).implicit_value(true);
+        .help("Disables the use of hyperthreaded cores").default_value(false).implicit_value(true);
     res.add_argument("--seed")
         .help("Provides seed for random number generation, warning: output is depending also on thread count")
         .scan<'u', unsigned>();
