@@ -181,25 +181,32 @@ ExecutionPlanner::NumaList ExecutionPlanner::getCpuArchitecture(bool isNuma) {
     return res;
 }
 
+// cpuList must be sorted!
 void ExecutionPlanner::buildFromCPUList(const NumaList &cpuArch, std::vector<unsigned> &cpuList) {
-    m_cpuPerNuma.resize(cpuArch.size());
+    m_cpuPerNuma.reserve(cpuArch.size());
     m_cpuCnt = static_cast<unsigned>(cpuList.size());
     for(unsigned numa=0; numa<cpuArch.size(); ++numa) {
-        bool firstUseNuma{true};
+        std::optional<unsigned> numaInd;
         for(unsigned cpu=0; cpu<cpuArch[numa].size(); ++cpu) {
             for(unsigned thread=0; thread<cpuArch[numa][cpu].size(); ++thread) {
                 unsigned curCpu = cpuArch[numa][cpu][thread];
 
                 if(std::binary_search(cpuList.begin(), cpuList.end(), curCpu)) {
-                    if(firstUseNuma) {
-                        firstUseNuma = false;
+                    if(!numaInd.has_value()) {
                         m_numaList.push_back(numa);
+                        numaInd = m_numaList.size() - 1;
+                        m_cpuPerNuma.emplace_back();
                     }
-
-                    m_cpuPerNuma[numa].push_back(curCpu);
+                    m_cpuPerNuma[numaInd.value()].push_back(curCpu);
                 }
             }
         }
+    }
+
+    m_cpuPerNuma.shrink_to_fit();
+    for(unsigned numaInd=0; numaInd<m_numaList.size(); ++numaInd) {
+        m_cpuPerNuma[numaInd].shrink_to_fit();
+        std::sort(m_cpuPerNuma[numaInd].begin(), m_cpuPerNuma[numaInd].end());
     }
 }
 
