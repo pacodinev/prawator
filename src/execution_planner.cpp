@@ -1,5 +1,7 @@
 #include "execution_planner.hpp"
 
+#include "config.h"
+
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
@@ -14,8 +16,6 @@
 #ifdef WATOR_NUMA
 #include <numa.h>
 #endif
-
-#include <config.h>
 
 static constexpr const char* linuxSysFSCPUPath{"/sys/devices/system/cpu"};
 
