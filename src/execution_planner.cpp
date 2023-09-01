@@ -9,6 +9,7 @@
 #include <locale>
 #include <set>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 #include <fstream>
 #include <map>
@@ -154,15 +155,16 @@ ExecutionPlanner::NumaList ExecutionPlanner::getCpuArchitecture(bool isNuma) {
 
     // physical_package_id, core_id
     using PpidCoreID = std::pair<unsigned, unsigned>;
+    using NumaCoreIND = std::pair<unsigned, unsigned>;
 
-    std::map<PpidCoreID, ThreadList*> cpuToSiblingList;
+    std::map<PpidCoreID, NumaCoreIND> cpuToSiblingList;
 
     for(unsigned cpu : cpuList) {
         PpidCoreID curCpuIDs = std::make_pair(getPhysicalPackageId(cpu),
                                               getCoreID(cpu));
         if(cpuToSiblingList.count(curCpuIDs) > 0) {
-            ThreadList &curThdList = *cpuToSiblingList[curCpuIDs];
-            curThdList.push_back(cpu);
+            const NumaCoreIND &corePos = cpuToSiblingList[curCpuIDs];
+            res[corePos.first][corePos.second].push_back(cpu);
         } else {
             unsigned curNuma = 0;
 #ifdef WATOR_NUMA 
@@ -172,8 +174,7 @@ ExecutionPlanner::NumaList ExecutionPlanner::getCpuArchitecture(bool isNuma) {
 #endif
 
             res.at(curNuma).push_back({cpu});
-            ThreadList *curThdList = &res.at(curNuma).back();
-            cpuToSiblingList[curCpuIDs] = curThdList;
+            cpuToSiblingList[curCpuIDs] = std::make_pair(curNuma, res.at(curNuma).size()-1);
         }
     }
 
