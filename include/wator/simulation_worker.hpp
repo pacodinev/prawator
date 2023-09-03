@@ -13,7 +13,7 @@ private:
     static constexpr unsigned LFSR_MASK = 0xDEADBEEF;
 
     Map &m_map;
-    const Rules &m_rules;
+    Rules m_rules;
     linear_feedback_shift_register_engine<std::uint32_t, LFSR_MASK> m_rng;
     unsigned m_numaInd, m_lineInd;
 
