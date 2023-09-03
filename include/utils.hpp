@@ -79,6 +79,12 @@ namespace Utils {
 
 #ifdef WATOR_NUMA
     inline void mapThisThreadStackToNuma(unsigned numaNode) {
+        if(numa_available() < 0) {
+            return;
+        }
+
+        numa_set_localalloc();
+
         std::pair<void*, std::size_t> thdStack = getThisThreadStack();
 
         constexpr std::size_t maxStackUsage = static_cast<const std::size_t>(32)*1024*1024;
