@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <sched.h>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -116,5 +117,73 @@ namespace Utils {
     }
 #else 
     inline void mapThisThreadStackToNuma(unsigned /*numaNode*/) {}
+#endif
+
+#if !defined(NDEBUG) && defined (WATOR_NUMA)
+    inline void assertMemLocalFunc(const void* ptr, std::size_t size, const char file[], unsigned line) { // NOLINT
+        (void)size; // TODO: use size
+
+        if(numa_available() < 0) {
+            return;
+        }
+
+        int numaNode = std::numeric_limits<int>::max();
+        int ret = numa_move_pages(0, 1, const_cast<void**>(&ptr), nullptr, &numaNode, 0); // NOLINT
+        if(ret < 0 || numaNode < 0 || numaNode == std::numeric_limits<int>::max()) {
+            std::clog << "assertMemLocal: numa_move_pages failed" << std::endl;
+            return;
+        }
+
+        cpu_set_t my_set;
+        CPU_ZERO(&my_set);
+        ret = sched_getaffinity(0, sizeof(cpu_set_t), &my_set);
+        if(ret < 0) {
+            std::clog << "assertMemLocal: sched_getaffinity failed" << std::endl;
+            return;
+        }
+
+        if(CPU_COUNT(&my_set) != 1) {
+            std::clog << "assertMemLocal: thread is not pinned to one core! "
+                      << file << ":" << line << std::endl;
+            return;
+        }
+
+        unsigned pinnedCpu = std::numeric_limits<unsigned>::max();
+        for(unsigned cpu=0; cpu<CPU_SETSIZE; ++cpu) {
+            if(CPU_ISSET(cpu, &my_set)) {
+                pinnedCpu = cpu;
+                break;
+            }
+        }
+        if(pinnedCpu == std::numeric_limits<unsigned>::max()) { return; }
+
+        int cpuNumaNode = numa_node_of_cpu(static_cast<int>(pinnedCpu));
+        if(cpuNumaNode < 0) { return; }
+        if(numaNode != cpuNumaNode) {
+            std::string msg = "Non local access to numa memory ";
+            msg += std::to_string(reinterpret_cast<std::size_t>(ptr)); // NOLINT
+            msg += " memory node ";
+            msg += std::to_string(numaNode);
+            msg += " task node ";
+            msg += std::to_string(cpuNumaNode);
+            msg += " at ";
+            msg += file;
+            msg += ":";
+            msg += std::to_string(line);
+            msg += "\n";
+            std::clog << msg;
+        }
+    }
+
+    template<class T>
+    inline void assertMemLocalFunc(const T &val, const char file[], unsigned line) { // NOLINT
+        assertMemLocalFunc(&val, sizeof(T), file, line);
+    }
+
+    #define assertMemLocal(val) Utils::assertMemLocalFunc(val, __FILE__, __LINE__)  // NOLINT
+    #define assertMemLocalPtr(ptr, size) Utils::assertMemLocalFunc(ptr, size, __FILE__, __LINE__)  // NOLINT
+#else
+    #define assertMemLocal(val)
+    #define assertMemLocalPtr(ptr, size)
 #endif
 }

@@ -1,3 +1,4 @@
+#include "utils.hpp"
 #include "wator/entity.hpp"
 #include "wator/rules.hpp"
 #include "wator/simulation_worker.hpp"
@@ -346,6 +347,8 @@ namespace WaTor {
         unsigned posy=0;
         unsigned posx=0;
         PosCache cache;
+        assertMemLocal(cache);
+        assertMemLocal(m_rules);
 
         // 0
         updateEntity<0, 0>(posy, posx, cache); ++posx;
