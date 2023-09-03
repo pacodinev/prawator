@@ -1,5 +1,6 @@
 #pragma once
 
+#include <limits>
 #include <sched.h>
 
 #include <cassert>
@@ -29,6 +30,7 @@ private:
     std::uint64_t m_sumFreq = 0; // in kHz
     std::uint64_t m_lastFreq = 0; // in kHz
     unsigned m_cpuPin = 0;
+    unsigned m_numaNode = std::numeric_limits<unsigned>::max();
     bool m_timeToDie = false;
 
 
@@ -44,6 +46,12 @@ private:
         CPU_SET(m_cpuPin, &cpuMask); // NOLINT
         int ret = sched_setaffinity(0, sizeof(cpuMask), &cpuMask);
         assert(ret == 0); // TODO: yea, this is bad, only for debug
+
+#ifdef WATOR_NUMA
+        if(m_numaNode != std::numeric_limits<unsigned>::max()) {
+            Utils::mapThisThreadStackToNuma(m_numaNode);
+        }
+#endif
     }
 #else
     void setCpuMask() noexcept { }
@@ -134,6 +142,11 @@ public:
         m_cpuPin = cpuPin;
 
         m_thread = std::thread(workerCall, this);
+    }
+
+    void startThread(unsigned cpuPin, unsigned numaNode) {
+        m_numaNode = numaNode;
+        startThread(cpuPin);
     }
 
     void runOnThisThread() { // TODO: cpuPin

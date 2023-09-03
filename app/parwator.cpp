@@ -18,6 +18,7 @@
 #include "wator/map.hpp"
 #include "wator/rules.hpp"
 #include "wator/simulation.hpp"
+#include "utils.hpp"
 
 #include <argparse/argparse.hpp>
 
@@ -28,13 +29,21 @@ namespace {
 
 #ifdef WATOR_CPU_PIN 
 void pinThreadToFirstCpu(const ExecutionPlanner &exp) {
-    unsigned fcpu = exp.getCpuListPerNuma(exp.getNumaList().front()).front();
+    unsigned fcpu = exp.getCpuListPerNuma(0).front();
 
     cpu_set_t cpuMask;
     CPU_ZERO(&cpuMask);
     CPU_SET(fcpu, &cpuMask); // NOLINT
     int ret = sched_setaffinity(0, sizeof(cpuMask), &cpuMask);
     assert(ret == 0); // TODO: yea, this is bad, only for debug
+
+    // TODO: remove theese ifdefs
+#ifdef WATOR_NUMA
+    if(exp.isNuma()) {
+        unsigned numaNode = exp.getNumaList()[0];
+        Utils::mapThisThreadStackToNuma(numaNode);
+    }
+#endif
 }
 #else 
 void pinThreadToFirstCpu(const ExecutionPlanner &exp) { }

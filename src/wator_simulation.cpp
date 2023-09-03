@@ -11,10 +11,15 @@ Simulation::Simulation(const Rules &rules, const ExecutionPlanner &exp, unsigned
     m_workers = std::make_unique<Worker<SimulationWorker>[]>(m_exp.getCpuCnt()); // NOLINT
     
     unsigned cpuInd = 0;
-    for(unsigned numaInd : m_exp.getNumaList()) {
+    for(unsigned numaInd=0; numaInd<m_exp.getNumaList().size(); ++numaInd) {
+        unsigned numaNode = m_exp.getNumaList()[numaInd];
         for(unsigned cpu : m_exp.getCpuListPerNuma(numaInd)) {
             if(cpuInd != 0) {
-                m_workers[cpuInd].startThread(cpu);
+                if(m_exp.isNuma()) {
+                    m_workers[cpuInd].startThread(cpu, numaNode);
+                } else {
+                    m_workers[cpuInd].startThread(cpu);
+                }
             }
             ++cpuInd;
         }
