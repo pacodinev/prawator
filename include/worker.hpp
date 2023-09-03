@@ -1,6 +1,8 @@
 #pragma once
 
+#include <deque>
 #include <limits>
+#include <memory_resource>
 #include <sched.h>
 
 #include <cassert>
@@ -14,6 +16,7 @@
 #include <filesystem>
 #include <queue>
 
+#include "numa_allocator.hpp"
 #include "utils.hpp"
 
 #include <config.h>
@@ -21,7 +24,8 @@
 template<class T>
 class Worker {
 private:
-    std::queue<T> m_workQueue;
+    std::optional<NumaAllocator> m_numaAlloc;
+    std::queue<T, std::pmr::deque<T>> m_workQueue;
     mutable std::mutex m_lock;
     mutable std::condition_variable m_taskEnqueued, m_queueEmpty;
     std::optional<std::thread> m_thread;
@@ -29,9 +33,10 @@ private:
     std::chrono::microseconds m_lastDuration = std::chrono::microseconds{0};
     std::uint64_t m_sumFreq = 0; // in kHz
     std::uint64_t m_lastFreq = 0; // in kHz
-    unsigned m_cpuPin = 0;
+    unsigned m_cpuNum = 0;
     unsigned m_numaNode = std::numeric_limits<unsigned>::max();
     bool m_timeToDie = false;
+    bool m_doCpuPin = false;
 
 
     void calcStats() {
@@ -39,23 +44,19 @@ private:
         m_sumFreq += m_lastFreq*m_lastDuration.count();
     }
 
-#ifdef WATOR_CPU_PIN
     void setCpuMask() noexcept {
-        cpu_set_t cpuMask;
-        CPU_ZERO(&cpuMask);
-        CPU_SET(m_cpuPin, &cpuMask); // NOLINT
-        int ret = sched_setaffinity(0, sizeof(cpuMask), &cpuMask);
-        assert(ret == 0); // TODO: yea, this is bad, only for debug
+        if(m_doCpuPin) {
+            cpu_set_t cpuMask;
+            CPU_ZERO(&cpuMask);
+            CPU_SET(m_cpuNum, &cpuMask); // NOLINT
+            int ret = sched_setaffinity(0, sizeof(cpuMask), &cpuMask);
+            assert(ret == 0); // TODO: yea, this is bad, only for debug
 
-#ifdef WATOR_NUMA
-        if(m_numaNode != std::numeric_limits<unsigned>::max()) {
-            Utils::mapThisThreadStackToNuma(m_numaNode);
+            if(m_numaNode != std::numeric_limits<unsigned>::max()) {
+                Utils::mapThisThreadStackToNuma(m_numaNode);
+            }
         }
-#endif
     }
-#else
-    void setCpuMask() noexcept { }
-#endif
 
     // expects m_lock to be locked
     // and m_work is not empty
@@ -77,7 +78,7 @@ private:
         auto clockEnd = std::chrono::steady_clock::now();
         // work is finished
         ulk.lock();
-        m_lastFreq = Utils::readCurCpuFreq(m_cpuPin);
+        m_lastFreq = Utils::readCurCpuFreq(m_cpuNum);
 
         m_workQueue.pop(); // delete work object
 
@@ -86,9 +87,9 @@ private:
     }
 
     void workFn() noexcept {
-        setCpuMask();
-
         std::unique_lock<std::mutex> ulk(m_lock);
+
+        setCpuMask();
 
         while(!m_workQueue.empty() || !m_timeToDie) {
             while(m_workQueue.empty() && !m_timeToDie) {
@@ -110,7 +111,9 @@ private:
 
 public:
 
-    Worker() = default;
+    Worker() : m_workQueue(std::pmr::get_default_resource()) {}
+    explicit Worker(unsigned numaNode) 
+        : m_numaAlloc(numaNode), m_workQueue(&(m_numaAlloc.value())), m_numaNode(numaNode) {}
 
     Worker(const Worker&) = delete;
     Worker& operator=(const Worker&) = delete;
@@ -135,24 +138,22 @@ public:
         thd.join();
     }
 
-    void startThread(unsigned cpuPin) {
+    void startThread(unsigned cpuNum, bool doCpuPin = false) {
         std::unique_lock<std::mutex> ulk(m_lock);
         assert(!m_thread.has_value());
 
-        m_cpuPin = cpuPin;
+        m_cpuNum = cpuNum;
+        m_doCpuPin = doCpuPin;
 
         m_thread = std::thread(workerCall, this);
     }
 
-    void startThread(unsigned cpuPin, unsigned numaNode) {
-        m_numaNode = numaNode;
-        startThread(cpuPin);
-    }
-
-    void runOnThisThread() { // TODO: cpuPin
+    void runOnThisThread(unsigned cpuNum) { // TODO: cpuPin
         std::unique_lock<std::mutex> ulk(m_lock);
         assert(!m_thread.has_value()); // it would probably work (if bellow is uncommented) but 
                                        // probably the programmer made mistake
+
+        m_cpuNum = cpuNum;
 
         while(!m_workQueue.empty()) {
             doWork(ulk);

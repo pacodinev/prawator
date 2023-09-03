@@ -16,10 +16,12 @@ namespace WaTor {
     
 class Simulation {
 private:
-
-    std::unique_ptr<Worker<SimulationWorker>[]> m_workers; // NOLINT
     Rules m_rules;
     const ExecutionPlanner &m_exp;
+
+    using WorkerType = Worker<SimulationWorker>;
+    std::unique_ptr<std::unique_ptr<WorkerType>[]> m_workers; // NOLINT
+
     Map m_map;
     std::mt19937 m_rng;
     std::chrono::microseconds m_allTime = std::chrono::microseconds{0};

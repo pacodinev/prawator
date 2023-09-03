@@ -24,39 +24,6 @@ namespace WaTor {
         m_numaInd(numaInd), m_lineInd(lineInd) { // NOLINT
     }
     
-    
-    // auto SimulationWorker::findTiles(const std::array<Map::Cordinate, 4> &dirs,
-    //                         Entity entSearch, unsigned &resSize) const
-    //     -> std::array<unsigned, 4> {
-    //     std::array<unsigned, 4> res; // NOLINT
-    //     resSize = 0;
-    //     for(unsigned i=0; i<dirs.size(); ++i) {
-    //         if(m_map.get(dirs[i]).getEntity() == entSearch) { // NOLINT
-    //             res[resSize] = i; // NOLINT
-    //             ++resSize;
-    //         }
-    //     }
-    //     return res;
-    // }
-
-    // auto SimulationWorker::findTilesForFish(const std::array<Map::Cordinate, 4> &dirs,
-    //                         unsigned &resSize) const
-    //     -> std::array<unsigned, 4> {
-    //     return findTiles(dirs, Entity::WATER, resSize);
-    // }
-
-    // auto GameCG::GamePerThdWork::findTilesShark(const std::array<Map::Cordinate, 4> &dirs,
-    //                         unsigned &resSize, bool &ate) const
-    //     -> std::array<unsigned, 4> {
-    //     std::array<unsigned, 4> res { findTiles(dirs, Entity::FISH, resSize) };
-    //     if(resSize == 0) {
-    //         ate = false;
-    //         return findTiles(dirs, Entity::WATER, resSize);
-    //     }
-    //     ate = true;
-    //     return res;
-    // }
-
     unsigned SimulationWorker::findTileFish(const std::array<Map::Cordinate, 4> &dirs, 
                                                 unsigned rnd) const {
         std::array<unsigned, 4> waterDirs; // NOLINT

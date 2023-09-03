@@ -1,25 +1,34 @@
 #include "wator/simulation.hpp"
 #include "wator/simulation_worker.hpp"
 #include <chrono>
+#include <memory>
 #include <numeric>
+
+#include <config.h>
 
 namespace WaTor {
 
 Simulation::Simulation(const Rules &rules, const ExecutionPlanner &exp, unsigned seed)
-    : m_rules(rules), m_exp(exp), m_map(m_rules, m_exp), m_rng(seed), 
+    : m_rules(rules), m_exp(exp), 
+      m_workers(std::make_unique<std::unique_ptr<WorkerType>[]>(m_exp.getCpuCnt())), // NOLINT
+      m_map(m_rules, m_exp), m_rng(seed), 
       m_waitingTime(m_exp.getCpuCnt(), std::chrono::microseconds{0}) {
-    m_workers = std::make_unique<Worker<SimulationWorker>[]>(m_exp.getCpuCnt()); // NOLINT
-    
-    unsigned cpuInd = 0;
+
+    unsigned cpuInd=0;
     for(unsigned numaInd=0; numaInd<m_exp.getNumaList().size(); ++numaInd) {
         unsigned numaNode = m_exp.getNumaList()[numaInd];
         for(unsigned cpu : m_exp.getCpuListPerNuma(numaInd)) {
+#ifdef WATOR_NUMA
+            m_workers[cpuInd] = std::make_unique<WorkerType>(numaNode);
+#else
+            m_workers[cpuInd] = std::make_unique<WorkerType>();
+#endif
             if(cpuInd != 0) {
-                if(m_exp.isNuma()) {
-                    m_workers[cpuInd].startThread(cpu, numaNode);
-                } else {
-                    m_workers[cpuInd].startThread(cpu);
-                }
+#ifdef WATOR_CPU_PIN
+                m_workers[cpuInd]->startThread(cpu, true);
+#else
+                m_workers[cpuInd]->startThread(cpu, false);
+#endif
             }
             ++cpuInd;
         }
@@ -32,13 +41,13 @@ void Simulation::calcHalfIterStats() {
     ++m_halfIterCnt;
 
     using namespace std::chrono;
-    microseconds maxTime = m_workers[0].getLastRunDuration();
+    microseconds maxTime = m_workers[0]->getLastRunDuration();
     for(unsigned cpuInd=1; cpuInd<m_exp.getCpuCnt(); ++cpuInd) {
-        microseconds lastDuration = m_workers[cpuInd].getLastRunDuration();
+        microseconds lastDuration = m_workers[cpuInd]->getLastRunDuration();
         maxTime = std::max(maxTime, lastDuration);
     }
     for(unsigned cpuInd=0; cpuInd<m_exp.getCpuCnt(); ++cpuInd) {
-        microseconds lastDuration = m_workers[cpuInd].getLastRunDuration();
+        microseconds lastDuration = m_workers[cpuInd]->getLastRunDuration();
         m_waitingTime[cpuInd] += maxTime - lastDuration;
     }
 }
@@ -54,19 +63,19 @@ void Simulation::doHalfIteration(bool odd) {
             }
             unsigned rnd = static_cast<unsigned>(m_rng());
             auto &&work = SimulationWorker{m_map, i, 2*j+uodd, m_rules, rnd};
-            m_workers[cpuInd].pushWork(work);
+            m_workers[cpuInd]->pushWork(work);
             ++cpuInd;
         }
     }
 
     unsigned rnd = static_cast<unsigned>(m_rng());
     auto &&work = SimulationWorker{m_map, 0, uodd, m_rules, rnd};
-    m_workers[0].pushWork(work);
+    m_workers[0]->pushWork(work);
 
-    m_workers[0].runOnThisThread();
+    m_workers[0]->runOnThisThread(m_exp.getCpuListPerNuma(0).front());
 
     for(unsigned i=1; i<m_exp.getCpuCnt(); ++i) {
-        m_workers[i].waitFinish();
+        m_workers[i]->waitFinish();
     }
 
     calcHalfIterStats();
@@ -84,7 +93,7 @@ void Simulation::doIteration() {
 std::vector<std::uint64_t> Simulation::getAvgFreqPerWorker() const {
     std::vector<std::uint64_t> res(m_exp.getCpuCnt());
     for(unsigned i=0; i<m_exp.getCpuCnt(); ++i) {
-        res[i] = m_workers[i].getAvgFreq();
+        res[i] = m_workers[i]->getAvgFreq();
     }
     return res;
 }
@@ -92,7 +101,7 @@ std::vector<std::uint64_t> Simulation::getAvgFreqPerWorker() const {
 std::uint64_t Simulation::getAvgFreq() const {
     std::uint64_t freqSum{0};
     for(unsigned i=0; i<m_exp.getCpuCnt(); ++i) {
-        freqSum += m_workers[i].getAvgFreq();
+        freqSum += m_workers[i]->getAvgFreq();
     }
     return freqSum / m_exp.getCpuCnt();
 }
