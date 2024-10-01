@@ -1,3 +1,5 @@
+### [Witepaper](docs/whitepaper.pdf)
+
 ### Building:
 
 ```sh
